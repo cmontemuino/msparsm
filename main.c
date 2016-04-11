@@ -80,6 +80,11 @@ int main (int argc, char *argv[]) {
 //        MPI_Send(&shm_rank, 1, MPI_INT, global_rank, GLOBAL_RESULT_TAG, MPI_COMM_WORLD);
     }
 
+    for (i = 0; i < global_size; i++)
+    {
+        printf("Translated: Global[%d] -> Local[%d]\n", partners[i], partners_map[i]);
+    }
+
     MPI_Finalize();
 
     return 0;
