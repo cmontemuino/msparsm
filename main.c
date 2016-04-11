@@ -16,12 +16,14 @@ int main (int argc, char *argv[]) {
 
     if (getenv("MSPARSM_VERBOSE")) verbose = 1;
 
-    MPI_Comm_rank( comm, &rank );
-    MPI_Comm_size( comm, &size );
     MPI_Get_processor_name( name, &namelen );
 
+    // MPI_COMM_TYPE_SHARED: This type splits the communicator into subcommunicators, each of which can create a shared memory region.
     MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
     MPI_Comm_size (shmcomm, &shm_size);
+
+    MPI_Comm_rank( comm, &rank );
+    MPI_Comm_size( comm, &size );
 
     if ( verbose ) printf("Proceso [%d]/[%d], shmcom [%d], running on [%s]\n", rank, size, shm_size, name);
 
