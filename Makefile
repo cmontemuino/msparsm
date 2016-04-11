@@ -7,11 +7,8 @@
 # Compiler
 CC=mpicc
 
-#VampirTrace
-VT=mpicc-vt
-
 # Compilation flags
-CFLAGS=-O2 -I.
+CFLAGS=-O3 -I.
 
 # define any libraries to link into executable:
 LIBS=-lm
