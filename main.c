@@ -5,7 +5,10 @@
 int const name_size = MPI_MAX_PROCESSOR_NAME;
 
 int main (int argc, char *argv[]) {
-    int rank, size, namelen;
+    MPI_Comm comm = MPI_COMM_WORLD;
+    MPI_Comm shmcomm;
+
+    int rank, size, namelen, shm_size;
     int verbose = 0;
     char name[name_size];
 
@@ -13,11 +16,15 @@ int main (int argc, char *argv[]) {
 
     if (getenv("MSPARSM_VERBOSE")) verbose = 1;
 
-    MPI_Comm_rank( MPI_COMM_WORLD, &rank );
-    MPI_Comm_size( MPI_COMM_WORLD, &size );
+    MPI_Comm_rank( comm, &rank );
+    MPI_Comm_size( comm, &size );
     MPI_Get_processor_name( name, &namelen );
 
-    if ( verbose ) printf("Proceso %d de %d procesos, nombre=%s\n", rank, size, name);
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
+    MPI_Comm_size (shmcomm, &shm_size);
+
+    if ( verbose ) printf("Proceso [%d]/[%d], shmcom [%d], running on [%s]\n", rank, size, shm_size, name);
+
 
     MPI_Finalize();
 
