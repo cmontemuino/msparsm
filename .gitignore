@@ -1,3 +1,10 @@
+###############
+Project Related
+###############
+
+bin/
+_build/
+
 ##########################################
 # https://github.com/github/gitignore/blob/master/C.gitignore
 ##########################################
