@@ -22,23 +22,24 @@ const int GO_TO_WORK_TAG = 400;
 int
 masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int maxsites)
 {
-    // myRank           : rank of the current process in the MPI ecosystem.
+    // global_rank           : rank of the current process in the global MPI ecosystem.
     // poolSize         : number of processes in the MPI ecosystem.
     // goToWork         : used by workers to realize if there is more work to do.
     // seedMatrix       : matrix containing the RNG seeds to be distributed to working processes.
     // localSeedMatrix  : matrix used by workers to receive RNG seeds from master.
-    int myRank;
+    int global_rank;
     int poolSize;
     unsigned short *seedMatrix;
     unsigned short localSeedMatrix[3];
 
+    MPI_Comm shmcomm;
 
     // MPI Initialization
     MPI_Init(&argc, &argv );
     MPI_Comm_size(MPI_COMM_WORLD, &poolSize);
-    MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+    MPI_Comm_rank(MPI_COMM_WORLD, &global_rank);
 
-    if(myRank == 0)
+    if(global_rank == 0)
     {
         int i;
         // Only the master process prints out the application's parameters
@@ -65,10 +66,10 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
     }
 
     // Filter out workers with rank higher than howmany, meaning there are more workers than samples to be generated.
-    if(myRank <= howmany)
+    if(global_rank <= howmany)
     {
         MPI_Scatter(seedMatrix, 3, MPI_UNSIGNED_SHORT, localSeedMatrix, 3, MPI_UNSIGNED_SHORT, 0, MPI_COMM_WORLD);
-        if(myRank == 0)
+        if(global_rank == 0)
         {
             // Master Processing
             masterProcessingLogic(howmany, 0, poolSize, parameters, maxsites);
@@ -79,7 +80,7 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
         }
     }
 
-    return myRank;
+    return 0;
 }
 
 void

@@ -207,7 +207,7 @@ gensam( char **list, double *pprobss, double *ptmrca, double *pttot, struct para
 	  	      free(seglst[seg].ptree) ;
 	    }
 		result.tree = treeOutput;
-		printf(treeOutput);
+		printf("%s", treeOutput);
 	}
 
 	if( pars.mp.timeflag ) {
