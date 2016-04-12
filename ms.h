@@ -6,7 +6,7 @@ struct devent {
 	double **mat ;
 	char detype ;
 	struct devent *nextde;
-	} ;
+} ;
 
 struct c_params {
 	int npop;
@@ -20,20 +20,20 @@ struct c_params {
 	double *size;
 	double *alphag;
 	struct devent *deventlist ;
-	} ;
+} ;
 struct m_params {
-	 double theta;
+	double theta;
 	int segsitesin;
 	int treeflag;
 	int timeflag;
 	int mfreq;
-	 } ;
+} ;
 struct params {
 	struct c_params cp;
 	struct m_params mp;
 	int commandlineseedflag ;
 	int output_precision;
-	};
+};
 
 struct node{
 	int abv;
@@ -55,7 +55,7 @@ void ordran(int n, double pbuf[]);
 void ranvec(int n, double pbuf[]);
 void order(int n, double pbuf[]);
 
-void biggerlist(int nsam,  char **list );
+void biggerlist(int nsam,  char **list, unsigned maxsites );
 int poisso(double u);
 void locate(int n,double beg, double len,double *ptr);
 void mnmial(int n, int nclass, double p[], int rv[]);
