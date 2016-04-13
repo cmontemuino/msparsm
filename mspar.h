@@ -1,13 +1,13 @@
 int masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int maxsites);
 void masterWorkerTeardown();
-void masterProcessingLogic(int howmany, int lastIdleWorker, int poolSize, struct params parameters, unsigned maxsites);
+void masterProcessingLogic(int howmany, int lastIdleWorker);
 int workerProcess(struct params parameters, unsigned maxsites);
 void doInitializeRng(int argc, char *argv[], int *seeds, struct params parameters);
 void sendResultsToMasterProcess(char* results);
 int receiveWorkRequest();
 void assignWork(int* workersActivity, int assignee, int samples);
-void readResultsFromWorkers(int goToWork, int* workersActivity);
-int findIdleProcess(int *processActivity, int poolSize, int lastAssignedProcess);
+char* readResultsFromWorkers(int goToWork, int* workersActivity);
+int findIdleProcess(int *processActivity, int lastAssignedProcess);
 char* generateSample(struct params parameters, unsigned maxsites);
 char *generateSamples(int, struct params, unsigned);
 struct gensam_result gensam(char **gametes, double *probss, double *ptmrca, double *pttot, struct params pars, int* segsites);

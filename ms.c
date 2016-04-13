@@ -122,7 +122,6 @@ int main(int argc, char *argv[]){
 	char **tbsparamstrs ;
 	double probss, tmrca, ttot ;
 	struct params pars ;
-	void seedit( const char * ) ;
 	struct params getpars( int argc, char *argv[], int *howmany, int ntbs, int count )  ;
 
 	int samples;
