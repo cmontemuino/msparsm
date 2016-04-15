@@ -1,9 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <mpi.h>
 #include "ms.h"
 #include "mspar.h"
+#include <mpi.h> /* OpenMPI library */
 
 const int SAMPLES_NUMBER_TAG = 200;
 const int RESULTS_TAG = 300;
@@ -50,7 +50,6 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
         shm_mode = 1;
     }
 
-
     if(world_rank == 0)
     {
         int i;
@@ -81,6 +80,7 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
     if(world_rank < howmany)
     {
         MPI_Scatter(seedMatrix, 3, MPI_UNSIGNED_SHORT, localSeedMatrix, 3, MPI_UNSIGNED_SHORT, 0, MPI_COMM_WORLD);
+
         /*
         MPI_Barrier(MPI_COMM_WORLD);
 
@@ -145,9 +145,8 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
             parallelSeed(localSeedMatrix);
         }
     }
-
-    return world_rank;
 //    return 0;
+    return world_rank;
 }
 
 void
