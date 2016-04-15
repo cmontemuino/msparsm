@@ -1,9 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <mpi.h>
 #include "ms.h"
 #include "mspar.h"
-#include <mpi.h> /* OpenMPI library */
 
 const int SAMPLES_NUMBER_TAG = 200;
 const int RESULTS_TAG = 300;
@@ -12,6 +12,7 @@ const int GO_TO_WORK_TAG = 400;
 // Following variables are with global scope in order to facilitate its sharing among routines.
 // They are going to be updated in the masterWorkerSetup routine only, which is called only one, therefore there is no
 // risk of race conditions or whatever other concurrency related problem.
+MPI_Comm shmcomm; // shm intra-communicator
 int world_rank, shm_rank;
 int world_size, shm_size;
 int shm_mode = 0;  // indicates whether MPI-3 SHM is going to be applied
@@ -29,7 +30,10 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
     unsigned short *seedMatrix;
     unsigned short localSeedMatrix[3];
 
-    MPI_Comm shmcomm;
+    // MPI-3 SHM related
+    MPI_Win win;      // shm window object
+    char *shm; // the shared memory
+    char *shm_results; // memory place where all MPI process from one node will going to share
 
     // MPI Initialization
     MPI_Init(&argc, &argv );
@@ -41,10 +45,11 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
     MPI_Comm_size( shmcomm, &shm_size );
     MPI_Comm_rank( shmcomm, &shm_rank );
 
-    if (shm_size != world_rank) // there are MPI process in ore than 1 computing node
+    if (shm_size != world_size) // there are MPI process in ore than 1 computing node
     {
         shm_mode = 1;
     }
+
 
     if(world_rank == 0)
     {
@@ -76,19 +81,65 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
     if(world_rank < howmany)
     {
         MPI_Scatter(seedMatrix, 3, MPI_UNSIGNED_SHORT, localSeedMatrix, 3, MPI_UNSIGNED_SHORT, 0, MPI_COMM_WORLD);
-        if(world_rank == 0) // or shm_rank = 0
-        {
-            // 1. if there are more nodes
-            // 2. then we should split the work among nodes
-            // 2.1 by doing world_size/shm_size we know how many masters are there around
-            // 2.2 each shm_rank = 0 does the "masterProcessingLogic", but with reduced howmany and world_size
+        /*
+        MPI_Barrier(MPI_COMM_WORLD);
 
+        if ( shm_mode == 0)
+        {
+            parallelSeed(localSeedMatrix);
+            MPI_Aint sz;
+            int dispunit = 1;
+
+            if (shm_rank != 0)
+            {
+
+                char *sample = generateSample(parameters, maxsites);
+                int length = strlen(sample);
+
+                MPI_Send(&length, 1, MPI_INT, 0, 10001, shmcomm);
+
+                MPI_Win_allocate_shared(length, 1, MPI_INFO_NULL, shmcomm, &shm, &win);
+                MPI_Win_shared_query(win, MPI_PROC_NULL, &sz, &dispunit, &shm_results);
+
+                memcpy(shm_results, sample, length);
+                free(sample);
+                MPI_Win_fence(0, win);
+                //MPI_Barrier(shmcomm);
+
+                MPI_Win_free(&win);
+
+            }
+            else
+            {
+                int length;
+
+                MPI_Status status;
+                MPI_Recv(&length, 1, MPI_INT, 1, 10001, shmcomm, &status);
+                //printf("[%d] - shm from [%d] ready for reading\n", shm_rank, status.MPI_SOURCE);
+
+
+                MPI_Win_allocate_shared(0, 1, MPI_INFO_NULL, shmcomm, &shm, &win);
+                MPI_Win_shared_query(win, MPI_PROC_NULL, &sz, &dispunit, &shm_results);
+
+                MPI_Win_fence(0, win);
+                //MPI_Barrier(shmcomm);
+                printf("%s\n", shm_rank, shm_results);
+
+                MPI_Win_free(&win);
+
+            }
+        }
+        */
+
+        if(world_rank == 0)
+        {
             // Master Processing
             masterProcessingLogic(howmany, 0);
 
             // if we're doing shm
             // then listen for results from other nodes
-        } else
+        }
+        else
         {
             // Worker Processing
             parallelSeed(localSeedMatrix);
@@ -96,6 +147,7 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
     }
 
     return world_rank;
+//    return 0;
 }
 
 void
@@ -110,11 +162,16 @@ masterWorkerTeardown() {
  * @param lastAssignedProcess last processes that has been assigned som work
  */
 void
-masterProcessingLogic(int howmany, int lastAssignedProcess) // we should get the communicator here
+masterProcessingLogic(int howmany, int lastAssignedProcess)
 {
     int *processActivity = (int*) malloc(world_size * sizeof(int));
     processActivity[0] = 1; // Master does not generate replicas
     int i;
+
+    // 1. if there are more nodes
+    // 2. then we should split the work among nodes
+    // 2.1 by doing world_size/shm_size we know how many masters are there around
+    // 2.2 each shm_rank = 0 does the "masterProcessingLogic", but with reduced howmany and world_size
 
     for(i=1; i<world_size; i++)
     {
@@ -133,13 +190,13 @@ masterProcessingLogic(int howmany, int lastAssignedProcess) // we should get the
         int idleProcess = findIdleProcess(processActivity, lastAssignedProcess);
         if(idleProcess >= 0)
         {
-            assignWork(processActivity, idleProcess, 1); // we should pass the communicator
+            assignWork(processActivity, idleProcess, 1);
             lastAssignedProcess = idleProcess;
             howmany--;
         }
         else
         {
-            sample = readResultsFromWorkers(1, processActivity); // we should pass the communicator
+            sample = readResultsFromWorkers(1, processActivity);
             offset = strlen(results);
             length = strlen(sample);
             results = realloc(results, offset + length + 1);
@@ -151,7 +208,7 @@ masterProcessingLogic(int howmany, int lastAssignedProcess) // we should get the
     }
     while(pendingJobs > 0)
     {
-        char *sample = readResultsFromWorkers(0, processActivity); // we should pass the communicator
+        char *sample = readResultsFromWorkers(0, processActivity);
         offset = strlen(results);
         length = strlen(sample);
         results = realloc(results, offset + length + 1);
