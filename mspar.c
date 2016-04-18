@@ -8,6 +8,12 @@
 const int SAMPLES_NUMBER_TAG = 200;
 const int RESULTS_TAG = 300;
 const int GO_TO_WORK_TAG = 400;
+const int NODE_MASTER_ASSIGNMENT = 500; // Used to assign a number of samples to a node master
+
+typedef struct {
+    int shm_rank;
+    int world_rank;
+} Rank_Struct;
 
 // Following variables are with global scope in order to facilitate its sharing among routines.
 // They are going to be updated in the masterWorkerSetup routine only, which is called only one, therefore there is no
@@ -24,6 +30,10 @@ int shm_mode = 0;  // indicates whether MPI-3 SHM is going to be applied
 int
 masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int maxsites)
 {
+    int numberOfNodes(void*, MPI_Aint);
+    void buildRankDataType(MPI_Datatype*);
+    char *readResults(MPI_Comm, int*);
+
     // goToWork         : used by workers to realize if there is more work to do.
     // seedMatrix       : matrix containing the RNG seeds to be distributed to working processes.
     // localSeedMatrix  : matrix used by workers to receive RNG seeds from master.
@@ -34,6 +44,7 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
     MPI_Win win;      // shm window object
     char *shm; // the shared memory
     char *shm_results; // memory place where all MPI process from one node will going to share
+    int nodeHowmany;
 
     // MPI Initialization
     MPI_Init(&argc, &argv );
@@ -45,7 +56,7 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
     MPI_Comm_size( shmcomm, &shm_size );
     MPI_Comm_rank( shmcomm, &shm_rank );
 
-    if (shm_size != world_size) // there are MPI process in ore than 1 computing node
+    if (shm_size != world_size) // there are MPI process in more than 1 computing node
     {
         shm_mode = 1;
     }
@@ -131,22 +142,108 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
         }
         */
 
-        if(world_rank == 0)
-        {
-            // Master Processing
-            masterProcessingLogic(howmany, 0);
+        Rank_Struct rank;
+        MPI_Aint struct_rank_size, struct_rank_size_lb;
+        MPI_Datatype struct_rank_type;
 
-            // if we're doing shm
-            // then listen for results from other nodes
+        buildRankDataType(&struct_rank_type);
+
+        MPI_Type_get_extent(struct_rank_type, &struct_rank_size_lb, &struct_rank_size);
+
+        rank.shm_rank = shm_rank;
+        rank.world_rank = world_rank;
+
+        void *ranks = malloc(struct_rank_size * (world_size));
+
+        MPI_Gather (&rank, 1, struct_rank_type, ranks, 1, struct_rank_type, 0, MPI_COMM_WORLD);
+
+        if ( world_rank == 0 )
+        {
+            int node_count = numberOfNodes(ranks, struct_rank_size);
+
+            // calculate how many samples are going to be distributed among all nodes
+            nodeHowmany = howmany / node_count;
+            int remainder = howmany % node_count;
+
+            int i, pendingNodeMasters = 0;
+            if ( node_count > 1 ) {
+                for (i = 1; i < world_size; ++i) // don't include global master now
+                {
+                    Rank_Struct *r;
+                    r = ranks + struct_rank_size * i;
+                    if (r->shm_rank == 0) {
+                        MPI_Send(&nodeHowmany, 1, MPI_INT, r->world_rank, NODE_MASTER_ASSIGNMENT, MPI_COMM_WORLD);
+                        pendingNodeMasters += 1;
+                    }
+                }
+            }
+
+            // process my own samples
+            masterProcessingLogic(nodeHowmany + remainder, 0);
+
+            if ( shm_mode )
+            {
+                int source;
+                while ( pendingNodeMasters ) {
+                    shm_results = readResults(MPI_COMM_WORLD, &source);
+                    printf("%s", shm_results);
+                    free(shm_results);
+                    pendingNodeMasters -= 1;
+                }
+            }
         }
         else
         {
-            // Worker Processing
-            parallelSeed(localSeedMatrix);
+            if ( shm_rank == 0 )
+            {
+                MPI_Recv(&nodeHowmany, 1, MPI_INT, 0, NODE_MASTER_ASSIGNMENT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                masterProcessingLogic(howmany, 0);
+            }
+            else
+            {
+                // Worker Processing
+                parallelSeed(localSeedMatrix);
+            }
         }
+
+        MPI_Type_free(&struct_rank_type);
     }
-//    return 0;
+
     return world_rank;
+}
+
+/**
+ * Calculates how many nodes are there taking the SHM ranks from all MPI processes.
+ * This function is useful to determine the number of node masters.
+ */
+int
+numberOfNodes(void *ranks, MPI_Aint rank_size)
+{
+    int i, result = 0;
+    Rank_Struct *rank;
+    for ( i = 0; i < world_size; i ++) {
+        rank = ranks + rank_size * i;
+        if (rank->shm_rank == 0)
+            result += 1;
+    }
+
+    return result;
+}
+
+void
+buildRankDataType(MPI_Datatype* result) {
+    Rank_Struct rank;
+    {
+        int blocklen[] = {1, 1};
+        MPI_Aint addr[3];
+        MPI_Get_address(&rank, &addr[0]);
+        MPI_Get_address(&rank.shm_rank, &addr[1]);
+        MPI_Get_address(&rank.world_rank, &addr[2]);
+        MPI_Aint displacements[] = {addr[1] - addr[0], addr[2] - addr[0]};
+        MPI_Datatype types[2] = {MPI_INT, MPI_INT};
+        MPI_Type_create_struct(2, blocklen, displacements, types, result);
+        MPI_Type_commit(result);
+    }
 }
 
 void
@@ -163,68 +260,61 @@ masterWorkerTeardown() {
 void
 masterProcessingLogic(int howmany, int lastAssignedProcess)
 {
-    int *processActivity = (int*) malloc(world_size * sizeof(int));
-    processActivity[0] = 1; // Master does not generate replicas
-    int i;
+    int *processActivity = (int*) malloc(shm_size * sizeof(int));
+    if ( howmany > 0 ) {
+        processActivity[0] = 1; // Master does not generate replicas
 
-    // 1. if there are more nodes
-    // 2. then we should split the work among nodes
-    // 2.1 by doing world_size/shm_size we know how many masters are there around
-    // 2.2 each shm_rank = 0 does the "masterProcessingLogic", but with reduced howmany and world_size
-
-    for(i=1; i<world_size; i++)
-    {
-        processActivity[i] = 0;
-    }
-
-    int pendingJobs = howmany; // number of jobs already assigned but pending to be finalized
-
-    char *results;
-    char *sample;
-    size_t offset, length;
-    results = malloc(sizeof(char)*1000);
-
-    while(howmany > 0)
-    {
-        int idleProcess = findIdleProcess(processActivity, lastAssignedProcess);
-        if(idleProcess >= 0)
-        {
-            assignWork(processActivity, idleProcess, 1);
-            lastAssignedProcess = idleProcess;
-            howmany--;
+        int i;
+        for (i = 1; i < shm_size; i++) {
+            processActivity[i] = 0;
         }
-        else
-        {
-            sample = readResultsFromWorkers(1, processActivity);
+
+        int pendingJobs = howmany; // number of jobs already assigned but pending to be finalized
+
+        char *results;
+        char *sample;
+        size_t offset, length;
+        results = malloc(sizeof(char) * 1000);
+
+        while (howmany > 0) {
+            int idleProcess = findIdleProcess(processActivity, lastAssignedProcess);
+            if (idleProcess >= 0) {
+                assignWork(processActivity, idleProcess, 1);
+                lastAssignedProcess = idleProcess;
+                howmany--;
+            }
+            else {
+                sample = readResultsFromWorkers(1, processActivity);
+                offset = strlen(results);
+                length = strlen(sample);
+                results = realloc(results, offset + length + 1);
+                memcpy(results + offset, sample, length);
+                free(sample);
+
+                pendingJobs--;
+            }
+        }
+
+        while (pendingJobs > 0) {
+            sample = readResultsFromWorkers(0, processActivity);
             offset = strlen(results);
             length = strlen(sample);
             results = realloc(results, offset + length + 1);
-            memcpy(results+offset, sample, length);
+            memcpy(results + offset, sample, length);
             free(sample);
 
             pendingJobs--;
         }
+
+        if (world_rank == 0) {
+            fprintf(stdout, "%s", results);
+        }
+        else {
+            MPI_Send(results, strlen(results) + 1, MPI_CHAR, 0, RESULTS_TAG, MPI_COMM_WORLD);
+        }
+
+        free(results); // be good citizen
     }
-    while(pendingJobs > 0)
-    {
-        char *sample = readResultsFromWorkers(0, processActivity);
-        offset = strlen(results);
-        length = strlen(sample);
-        results = realloc(results, offset + length + 1);
-        memcpy(results+offset, sample, length);
-        free(sample);
-
-        pendingJobs--;
-    }
-
-    fprintf(stdout, "%s", results);
-    free(results); // be good citizen
-
-    // 1. at this point all of the work was done
-    // 2. if there are more nodes (shm_mode?)
-    // 3. if I'm not the super master, then send results to WORLD rank 0
-    // 4. otherwise print the accumulated results? (or not accumulate them if not needed?)
-    // don't forget to 'free' the results
 }
 
 /*
@@ -240,20 +330,30 @@ masterProcessingLogic(int howmany, int lastAssignedProcess)
  */
 char* readResultsFromWorkers(int goToWork, int* workersActivity)
 {
-    MPI_Status status;
-    int size;
+    char *readResults(MPI_Comm, int*);
+
     int source;
+    char *results = readResults(shmcomm, &source);
 
-    MPI_Probe(MPI_ANY_SOURCE, RESULTS_TAG, MPI_COMM_WORLD, &status);
-    MPI_Get_count(&status, MPI_CHAR, &size);
-    source = status.MPI_SOURCE;
-    char * results = (char *) malloc(size*sizeof(char));
-
-    MPI_Recv(results, size, MPI_CHAR, source, RESULTS_TAG, MPI_COMM_WORLD, &status);
-    source = status.MPI_SOURCE;
-    MPI_Send(&goToWork, 1, MPI_INT, source, GO_TO_WORK_TAG, MPI_COMM_WORLD);
+    MPI_Send(&goToWork, 1, MPI_INT, source, GO_TO_WORK_TAG, shmcomm);
 
     workersActivity[source]=0;
+    return results;
+}
+
+char
+*readResults(MPI_Comm comm, int *source)
+{
+    MPI_Status status;
+    int size;
+
+    MPI_Probe(MPI_ANY_SOURCE, RESULTS_TAG, comm, &status);
+    MPI_Get_count(&status, MPI_CHAR, &size);
+    *source = status.MPI_SOURCE;
+    char *results = (char *) malloc(size*sizeof(char));
+
+    MPI_Recv(results, size, MPI_CHAR, *source, RESULTS_TAG, comm, MPI_STATUS_IGNORE);
+
     return results;
 }
 
@@ -300,7 +400,7 @@ int findIdleProcess(int *processActivity, int lastAssignedProcess) {
  * @param samples samples the worker is going to generate
  */
 void assignWork(int* workersActivity, int worker, int samples) {
-    MPI_Send(&samples, 1, MPI_INT, worker, SAMPLES_NUMBER_TAG, MPI_COMM_WORLD);
+    MPI_Send(&samples, 1, MPI_INT, worker, SAMPLES_NUMBER_TAG, shmcomm);
     //TODO check usage of MPI_Sendv??
     workersActivity[worker]=1;
 }
@@ -357,7 +457,7 @@ int receiveWorkRequest(){
     int samples;
     MPI_Status status;
 
-    MPI_Recv(&samples, 1, MPI_INT, 0, SAMPLES_NUMBER_TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&samples, 1, MPI_INT, 0, SAMPLES_NUMBER_TAG, shmcomm, &status);
     return samples;
 }
 
@@ -365,7 +465,7 @@ int isThereMoreWork() {
     int goToWork;
     MPI_Status status;
 
-    MPI_Recv(&goToWork, 1, MPI_INT, 0, GO_TO_WORK_TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&goToWork, 1, MPI_INT, 0, GO_TO_WORK_TAG, shmcomm, &status);
 
     return goToWork;
 }
@@ -527,7 +627,7 @@ char *doPrintWorkerResultGametes(int segsites, int nsam, char **gametes){
  */
 void sendResultsToMasterProcess(char* results)
 {
-    MPI_Send(results, strlen(results)+1, MPI_CHAR, 0, RESULTS_TAG, MPI_COMM_WORLD);
+    MPI_Send(results, strlen(results)+1, MPI_CHAR, 0, RESULTS_TAG, shmcomm);
 }
 
 // **************************************  //
