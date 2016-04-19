@@ -3,12 +3,13 @@
 #include <string.h>
 #include "ms.h"
 #include "mspar.h"
-#include <mpi.h> /* OpenMPI library */
+//#include <mpi.h> /* OpenMPI library */
 
 const int SAMPLES_NUMBER_TAG = 200;
 const int RESULTS_TAG = 300;
 const int GO_TO_WORK_TAG = 400;
 const int NODE_MASTER_ASSIGNMENT = 500; // Used to assign a number of samples to a node master
+const int ACK_TAG = 600; // Used by workers in the master node
 
 typedef struct {
     int shm_rank;
@@ -28,12 +29,8 @@ int shm_mode = 0;  // indicates whether MPI-3 SHM is going to be applied
 // **************************************  //
 
 int
-masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int maxsites)
+masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int maxsites, int *excludeFrom)
 {
-    int numberOfNodes(void*, MPI_Aint);
-    void buildRankDataType(MPI_Datatype*);
-    char *readResults(MPI_Comm, int*);
-
     // goToWork         : used by workers to realize if there is more work to do.
     // seedMatrix       : matrix containing the RNG seeds to be distributed to working processes.
     // localSeedMatrix  : matrix used by workers to receive RNG seeds from master.
@@ -61,6 +58,8 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
         shm_mode = 1;
     }
 
+    *excludeFrom = shm_mode;
+
     if(world_rank == 0)
     {
         int i;
@@ -68,8 +67,8 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
         for(i=0; i<argc; i++)
         {
             fprintf(stdout, "%s ",argv[i]);
+            fflush(stdout);
         }
-
         // If there are (not likely) more processes than samples, then the process pull
         // is cut up to the number of samples. */
         if(world_size > howmany)
@@ -165,9 +164,14 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
             nodeHowmany = howmany / node_count;
             int remainder = howmany % node_count;
 
+
+            int samples = nodeHowmany + remainder;
+            MPI_Send(&samples, 1, MPI_INT, 1, NODE_MASTER_ASSIGNMENT, MPI_COMM_WORLD); // process 1 will output the results
             int i, pendingNodeMasters = 0;
+
             if ( node_count > 1 ) {
-                for (i = 1; i < world_size; ++i) // don't include global master now
+                // Distribute samples among nodes
+                for (i = 1; i < world_size; ++i) // don't include node with global master now
                 {
                     Rank_Struct *r;
                     r = ranks + struct_rank_size * i;
@@ -179,14 +183,15 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
             }
 
             // process my own samples
-            masterProcessingLogic(nodeHowmany + remainder, 0);
+            masterProcessingLogic(nodeHowmany + remainder, shm_mode);
 
             if ( shm_mode )
             {
                 int source;
                 while ( pendingNodeMasters ) {
                     shm_results = readResults(MPI_COMM_WORLD, &source);
-                    printf("%s", shm_results);
+                    fprintf(stdout, "%s", shm_results);
+                    fflush(stdout);
                     free(shm_results);
                     pendingNodeMasters -= 1;
                 }
@@ -194,14 +199,15 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
         }
         else
         {
-            if ( shm_rank == 0 )
+            if ( shm_mode && ( shm_rank == 0 || world_rank == 1 ) )
             {
                 MPI_Recv(&nodeHowmany, 1, MPI_INT, 0, NODE_MASTER_ASSIGNMENT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 masterProcessingLogic(howmany, 0);
+
             }
             else
             {
-                // Worker Processing
+                // Workers initialize the RGN
                 parallelSeed(localSeedMatrix);
             }
         }
@@ -261,11 +267,18 @@ void
 masterProcessingLogic(int howmany, int lastAssignedProcess)
 {
     int *processActivity = (int*) malloc(shm_size * sizeof(int));
+    int node_offset = 0;
+    if ( world_rank == 1 )
+    {
+        node_offset = 1;
+        processActivity[1] = 1;
+    }
+
     if ( howmany > 0 ) {
         processActivity[0] = 1; // Master does not generate replicas
 
         int i;
-        for (i = 1; i < shm_size; i++) {
+        for (i = node_offset+1; i < shm_size; i++) {
             processActivity[i] = 0;
         }
 
@@ -277,44 +290,93 @@ masterProcessingLogic(int howmany, int lastAssignedProcess)
         results = malloc(sizeof(char) * 1000);
 
         while (howmany > 0) {
-            int idleProcess = findIdleProcess(processActivity, lastAssignedProcess);
+            int idleProcess = findIdleProcess(processActivity, lastAssignedProcess, node_offset);
             if (idleProcess >= 0) {
                 assignWork(processActivity, idleProcess, 1);
                 lastAssignedProcess = idleProcess;
                 howmany--;
             }
-            else {
-                sample = readResultsFromWorkers(1, processActivity);
-                offset = strlen(results);
-                length = strlen(sample);
-                results = realloc(results, offset + length + 1);
-                memcpy(results + offset, sample, length);
-                free(sample);
+            else
+            {
+                // we don't really get results from workers when they're located at same node as the global master, but such workers
+                // rather directly output the results. This scenario may only happen when either current rank is 0 (1 node) or 1 (more than 1 node)
+                if (world_rank != 0 && shm_rank == 0)
+                {
+                    sample = readResultsFromWorkers(1, processActivity);
+                    offset = strlen(results);
+                    length = strlen(sample);
+                    results = realloc(results, offset + length + 1);
+                    memcpy(results + offset, sample, length);
+                    free(sample);
+                }
+                else
+                {
+                    // we need to receive some ACK to verify a sample was outputted by a local worker process
+                    readAckFromLocalWorker(1, processActivity);
+                }
 
                 pendingJobs--;
             }
         }
 
         while (pendingJobs > 0) {
-            sample = readResultsFromWorkers(0, processActivity);
-            offset = strlen(results);
-            length = strlen(sample);
-            results = realloc(results, offset + length + 1);
-            memcpy(results + offset, sample, length);
-            free(sample);
+            if (world_rank != 0 && shm_rank == 0)
+            {
+                sample = readResultsFromWorkers(0, processActivity);
+                offset = strlen(results);
+                length = strlen(sample);
+                results = realloc(results, offset + length + 1);
+                memcpy(results + offset, sample, length);
+                free(sample);
+            }
+            else
+            {
+                // we need to receive some ACK to verify a sample was outputted by a local worker process
+                readAckFromLocalWorker(0, processActivity);
+            }
 
             pendingJobs--;
         }
 
-        if (world_rank == 0) {
+        if ( world_rank == 0 ) {
+            // directly output the results
             fprintf(stdout, "%s", results);
+            fflush(stdout);
         }
-        else {
-            MPI_Send(results, strlen(results) + 1, MPI_CHAR, 0, RESULTS_TAG, MPI_COMM_WORLD);
+        else
+        {
+            if ( shm_rank == 0 ) // exclude the case where there are more than 1 node, and local master is world_rank=1
+            {
+                MPI_Send(results, strlen(results) + 1, MPI_CHAR, 0, RESULTS_TAG, MPI_COMM_WORLD);
+            }
         }
 
         free(results); // be good citizen
     }
+}
+
+void
+readAckFromLocalWorker(int goToWork, int *workersActivity)
+{
+    int source;
+
+    readAck(shmcomm, &source);
+
+    MPI_Send(&goToWork, 1, MPI_INT, source, GO_TO_WORK_TAG, shmcomm);
+
+    workersActivity[source]=0;
+}
+
+void
+readAck(MPI_Comm comm, int* source)
+{
+    MPI_Status status;
+
+    MPI_Probe(MPI_ANY_SOURCE, ACK_TAG, comm, &status);
+    *source = status.MPI_SOURCE;
+
+    int ack;
+    MPI_Recv(&ack, 1, MPI_INT, *source, ACK_TAG, comm, MPI_STATUS_IGNORE);
 }
 
 /*
@@ -365,7 +427,7 @@ char
  *
  * @return idle process index or -1 if all processes are busy.
  */
-int findIdleProcess(int *processActivity, int lastAssignedProcess) {
+int findIdleProcess(int *processActivity, int lastAssignedProcess, int node_offset) {
     /*
      * Implementation note: lastAssignedProcess is used to implement a fairness policy in which every available process
      * can be assigned with some work.
@@ -377,7 +439,7 @@ int findIdleProcess(int *processActivity, int lastAssignedProcess) {
     };
 
     if(i >= world_size){
-        i=1; // master process does not generate replicas
+        i = node_offset + 1; // master process does not generate replicas
         while(i < lastAssignedProcess && processActivity[i] == 1){
             i++;
         }
@@ -414,14 +476,15 @@ workerProcess(struct params parameters, unsigned maxsites)
 {
     int samples;
     char *results;
+    int master;
 
-    samples = receiveWorkRequest();
+    samples = receiveWorkRequest(&master);
     results = generateSamples(samples, parameters, maxsites);
 
-    sendResultsToMasterProcess(results);
+    sendResultsToMasterProcess(results, master);
 
     free(results); // be good citizen
-    return isThereMoreWork();
+    return isThereMoreWork(master);
 }
 
 char *generateSamples(int samples, struct params parameters, unsigned maxsites)
@@ -453,19 +516,23 @@ char *generateSamples(int samples, struct params parameters, unsigned maxsites)
  *
  * @return samples to be generated
  */
-int receiveWorkRequest(){
+int
+receiveWorkRequest(int *master){
     int samples;
-    MPI_Status status;
 
-    MPI_Recv(&samples, 1, MPI_INT, 0, SAMPLES_NUMBER_TAG, shmcomm, &status);
+    *master = 0;
+    if ( shm_mode && world_rank == shm_rank ) {
+        *master = 1;
+    }
+
+    MPI_Recv(&samples, 1, MPI_INT, *master, SAMPLES_NUMBER_TAG, shmcomm, MPI_STATUS_IGNORE);
     return samples;
 }
 
-int isThereMoreWork() {
+int isThereMoreWork(int master) {
     int goToWork;
-    MPI_Status status;
 
-    MPI_Recv(&goToWork, 1, MPI_INT, 0, GO_TO_WORK_TAG, shmcomm, &status);
+    MPI_Recv(&goToWork, 1, MPI_INT, master, GO_TO_WORK_TAG, shmcomm, MPI_STATUS_IGNORE);
 
     return goToWork;
 }
@@ -625,9 +692,22 @@ char *doPrintWorkerResultGametes(int segsites, int nsam, char **gametes){
  * @param results results to be sent
  *
  */
-void sendResultsToMasterProcess(char* results)
+void sendResultsToMasterProcess(char* results, int master)
 {
-    MPI_Send(results, strlen(results)+1, MPI_CHAR, 0, RESULTS_TAG, shmcomm);
+    if ( shm_mode )
+    {
+        MPI_Send(results, strlen(results)+1, MPI_CHAR, master, RESULTS_TAG, shmcomm);
+    }
+    else
+    {
+
+        int ack = 1;
+        // MPI_Request req;
+        // MPI_Isend(&ack, 1, MPI_INT, master, ACK_TAG, MPI_COMM_WORLD, &req);
+        MPI_Send(&ack, 1, MPI_INT, master, ACK_TAG, shmcomm);
+        printf("%s", results);
+        // MPI_Wait(req, MPI_STATUS_IGNORE);
+    }
 }
 
 // **************************************  //
