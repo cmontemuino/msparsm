@@ -157,21 +157,24 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
 
         MPI_Gather (&rank, 1, struct_rank_type, ranks, 1, struct_rank_type, 0, MPI_COMM_WORLD);
 
-        if ( world_rank == 0 )
+        if ( world_rank == 0 ) // Global master
         {
-            int node_count = numberOfNodes(ranks, struct_rank_size);
-
-            // calculate how many samples are going to be distributed among all nodes
-            nodeHowmany = howmany / node_count;
-            int remainder = howmany % node_count;
-
-
-            int samples = nodeHowmany + remainder;
-            MPI_Send(&samples, 1, MPI_INT, 1, NODE_MASTER_ASSIGNMENT, MPI_COMM_WORLD); // process 1 will output the results
             int i, pendingNodeMasters = 0;
 
-            if ( node_count > 1 ) {
-                // Distribute samples among nodes
+            // Distribute remaining samples.
+            if ( shm_mode )
+            {
+                int node_count = numberOfNodes(ranks, struct_rank_size);
+
+                // calculate how many samples are going to be distributed among all nodes
+                nodeHowmany = howmany / node_count;
+                int remainder = howmany % node_count;
+
+                // Delegate samples on node where the global master resides to a secondary master node (workd_rank = 1).
+                int samples = nodeHowmany + remainder;
+                MPI_Send(&samples, 1, MPI_INT, 1, NODE_MASTER_ASSIGNMENT, MPI_COMM_WORLD); // process 1 will output the results
+
+                // Distribute samples among remaining nodes
                 for (i = 1; i < world_size; ++i) // don't include node with global master now
                 {
                     Rank_Struct *r;
@@ -181,10 +184,8 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
                         pendingNodeMasters += 1;
                     }
                 }
-            }
 
-            if ( shm_mode )
-            {
+                // Receive results from master nodes
                 int source;
                 while ( pendingNodeMasters ) {
                     shm_results = readResults(MPI_COMM_WORLD, &source);
@@ -194,10 +195,14 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
                     pendingNodeMasters -= 1;
                 }
             }
+            else // There is only one node, hence a secondary master is not needed
+            {
+                masterProcessingLogic(howmany, 0);
+            }
         }
         else
         {
-            if ( shm_mode && ( shm_rank == 0 || world_rank == 1 ) )
+            if ( shm_rank == 0 || ( shm_mode && world_rank == 1 ) )
             {
                 MPI_Recv(&nodeHowmany, 1, MPI_INT, 0, NODE_MASTER_ASSIGNMENT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
                 masterProcessingLogic(nodeHowmany, 0);
