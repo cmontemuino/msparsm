@@ -49,9 +49,7 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
     // MPI_COMM_TYPE_SHARED: This type splits the communicator into subcommunicators, each of which can create a shared memory region.
-    //MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
-    int color = world_rank < 3;
-    MPI_Comm_split(MPI_COMM_WORLD, color, world_rank, &shmcomm);
+    MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
     MPI_Comm_size( shmcomm, &shm_size );
     MPI_Comm_rank( shmcomm, &shm_rank );
 
