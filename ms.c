@@ -139,10 +139,11 @@ int main(int argc, char *argv[]){
 
 	// Master-Worker
     int excludeFrom;
-	int myRank = masterWorkerSetup(argc, argv, howmany, pars, SITESINC, &excludeFrom);
+    int shm_rank;
+	int world_rank = masterWorkerSetup(argc, argv, howmany, pars, SITESINC, &excludeFrom, &shm_rank);
 
 
-	if(myRank <= howmany && myRank > excludeFrom)
+	if(world_rank <= howmany && world_rank > excludeFrom && shm_rank != 0 )
 	{
 		while(workerProcess(pars, SITESINC));
 	}

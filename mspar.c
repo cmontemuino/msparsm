@@ -29,7 +29,7 @@ int shm_mode = 0;  // indicates whether MPI-3 SHM is going to be applied
 // **************************************  //
 
 int
-masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int maxsites, int *excludeFrom)
+masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int maxsites, int *excludeFrom, int *node_rank)
 {
     // goToWork         : used by workers to realize if there is more work to do.
     // seedMatrix       : matrix containing the RNG seeds to be distributed to working processes.
@@ -49,7 +49,9 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
     // MPI_COMM_TYPE_SHARED: This type splits the communicator into subcommunicators, each of which can create a shared memory region.
-    MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
+    //MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
+    int color = world_rank < 3;
+    MPI_Comm_split(MPI_COMM_WORLD, color, world_rank, &shmcomm);
     MPI_Comm_size( shmcomm, &shm_size );
     MPI_Comm_rank( shmcomm, &shm_rank );
 
@@ -59,6 +61,7 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
     }
 
     *excludeFrom = shm_mode;
+    *node_rank = shm_rank;
 
     if(world_rank == 0)
     {
@@ -182,9 +185,6 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
                 }
             }
 
-            // process my own samples
-            masterProcessingLogic(nodeHowmany + remainder, shm_mode);
-
             if ( shm_mode )
             {
                 int source;
@@ -202,7 +202,7 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
             if ( shm_mode && ( shm_rank == 0 || world_rank == 1 ) )
             {
                 MPI_Recv(&nodeHowmany, 1, MPI_INT, 0, NODE_MASTER_ASSIGNMENT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                masterProcessingLogic(howmany, 0);
+                masterProcessingLogic(nodeHowmany, 0);
 
             }
             else
@@ -300,7 +300,7 @@ masterProcessingLogic(int howmany, int lastAssignedProcess)
             {
                 // we don't really get results from workers when they're located at same node as the global master, but such workers
                 // rather directly output the results. This scenario may only happen when either current rank is 0 (1 node) or 1 (more than 1 node)
-                if (world_rank != 0 && shm_rank == 0)
+                if (world_rank > 1)
                 {
                     sample = readResultsFromWorkers(1, processActivity);
                     offset = strlen(results);
@@ -338,6 +338,7 @@ masterProcessingLogic(int howmany, int lastAssignedProcess)
             pendingJobs--;
         }
 
+
         if ( world_rank == 0 ) {
             // directly output the results
             fprintf(stdout, "%s", results);
@@ -350,7 +351,6 @@ masterProcessingLogic(int howmany, int lastAssignedProcess)
                 MPI_Send(results, strlen(results) + 1, MPI_CHAR, 0, RESULTS_TAG, MPI_COMM_WORLD);
             }
         }
-
         free(results); // be good citizen
     }
 }
@@ -360,7 +360,7 @@ readAckFromLocalWorker(int goToWork, int *workersActivity)
 {
     int source;
 
-    readAck(shmcomm, &source);
+    readAck(&source);
 
     MPI_Send(&goToWork, 1, MPI_INT, source, GO_TO_WORK_TAG, shmcomm);
 
@@ -368,15 +368,15 @@ readAckFromLocalWorker(int goToWork, int *workersActivity)
 }
 
 void
-readAck(MPI_Comm comm, int* source)
+readAck(int* source)
 {
     MPI_Status status;
 
-    MPI_Probe(MPI_ANY_SOURCE, ACK_TAG, comm, &status);
+    MPI_Probe(MPI_ANY_SOURCE, ACK_TAG, shmcomm, &status);
     *source = status.MPI_SOURCE;
 
     int ack;
-    MPI_Recv(&ack, 1, MPI_INT, *source, ACK_TAG, comm, MPI_STATUS_IGNORE);
+    MPI_Recv(&ack, 1, MPI_INT, *source, ACK_TAG, shmcomm, MPI_STATUS_IGNORE);
 }
 
 /*
@@ -434,11 +434,11 @@ int findIdleProcess(int *processActivity, int lastAssignedProcess, int node_offs
      */
     int result = -1;
     int i= lastAssignedProcess+1; // master process does not generate replicas
-    while(i < world_size && processActivity[i] == 1){
+    while(i < shm_size && processActivity[i] == 1){
         i++;
     };
 
-    if(i >= world_size){
+    if(i >= shm_size){
         i = node_offset + 1; // master process does not generate replicas
         while(i < lastAssignedProcess && processActivity[i] == 1){
             i++;
@@ -694,7 +694,7 @@ char *doPrintWorkerResultGametes(int segsites, int nsam, char **gametes){
  */
 void sendResultsToMasterProcess(char* results, int master)
 {
-    if ( shm_mode )
+    if ( shm_mode && world_rank != shm_rank )
     {
         MPI_Send(results, strlen(results)+1, MPI_CHAR, master, RESULTS_TAG, shmcomm);
     }
@@ -702,11 +702,8 @@ void sendResultsToMasterProcess(char* results, int master)
     {
 
         int ack = 1;
-        // MPI_Request req;
-        // MPI_Isend(&ack, 1, MPI_INT, master, ACK_TAG, MPI_COMM_WORLD, &req);
         MPI_Send(&ack, 1, MPI_INT, master, ACK_TAG, shmcomm);
         printf("%s", results);
-        // MPI_Wait(req, MPI_STATUS_IGNORE);
     }
 }
 

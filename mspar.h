@@ -1,6 +1,6 @@
 #include <mpi.h>
 
-int masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int maxsites, int *excludeFrom);
+int masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int maxsites, int *excludeFrom, int *node_rank);
 void masterWorkerTeardown();
 void masterProcessingLogic(int howmany, int lastIdleWorker);
 int workerProcess(struct params parameters, unsigned maxsites);
@@ -24,7 +24,7 @@ void readAckFromLocalWorker(int goToWork, int *workersActivity);
 int numberOfNodes(void*, MPI_Aint);
 void buildRankDataType(MPI_Datatype*);
 char *readResults(MPI_Comm, int*);
-void readAck(MPI_Comm, int*);
+void readAck(int*);
 
 /* From ms.c*/
 char ** cmatrix(int nsam, int len);
