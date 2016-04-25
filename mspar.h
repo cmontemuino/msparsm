@@ -1,16 +1,16 @@
 #include <mpi.h>
 
-int masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int maxsites, int *excludeFrom, int *node_rank);
+int masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int unsigned maxsites, int *excludeFrom, int *node_rank);
 void masterWorkerTeardown();
-void masterProcessingLogic(int howmany, int lastIdleWorker);
-int workerProcess(struct params parameters, unsigned maxsites);
+void masterProcessingLogic(int howmany, int lastIdleWorker, struct params parameters, unsigned int maxsites);
+int workerProcess(struct params parameters, unsigned int maxsites);
 void doInitializeRng(int argc, char *argv[], int *seeds, struct params parameters);
 void sendResultsToMasterProcess(char* results, int master);
 int receiveWorkRequest(int *master);
 void assignWork(int* workersActivity, int assignee, int samples);
 char* readResultsFromWorkers(int goToWork, int* workersActivity);
 int findIdleProcess(int *processActivity, int lastAssignedProcess, int node_offset);
-char* generateSample(struct params parameters, unsigned maxsites);
+char* generateSample(struct params parameters, unsigned int maxsites);
 char *generateSamples(int, struct params, unsigned);
 struct gensam_result gensam(char **gametes, double *probss, double *ptmrca, double *pttot, struct params pars, int* segsites);
 int isThereMoreWork(int master);
@@ -20,11 +20,10 @@ char *doPrintWorkerResultHeader(int segsites, double probss, struct params param
 char *doPrintWorkerResultPositions(int segsites, int output_precision, double *posit);
 char *doPrintWorkerResultGametes(int segsites, int nsam, char **gametes);
 
-void readAckFromLocalWorker(int goToWork, int *workersActivity);
+int readAckFromLocalWorker(int remaining, int *workersActivity, struct params parameters, unsigned int maxsites);
 int numberOfNodes(void*, MPI_Aint);
 void buildRankDataType(MPI_Datatype*);
 char *readResults(MPI_Comm, int*);
-void readAck(int*);
 
 /* From ms.c*/
 char ** cmatrix(int nsam, int len);

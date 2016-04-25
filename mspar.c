@@ -29,7 +29,7 @@ int shm_mode = 0;  // indicates whether MPI-3 SHM is going to be applied
 // **************************************  //
 
 int
-masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int maxsites, int *excludeFrom, int *node_rank)
+masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, unsigned int maxsites, int *excludeFrom, int *node_rank)
 {
     // goToWork         : used by workers to realize if there is more work to do.
     // seedMatrix       : matrix containing the RNG seeds to be distributed to working processes.
@@ -65,31 +65,25 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
     {
         int i;
         // Only the master process prints out the application's parameters
-        for(i=0; i<argc; i++)
-        {
+        for(i=0; i<argc; i++) {
             fprintf(stdout, "%s ",argv[i]);
             fflush(stdout);
         }
         // If there are (not likely) more processes than samples, then the process pull
         // is cut up to the number of samples. */
         if(world_size > howmany)
-        {
             world_size = howmany + 1; // the extra 1 is due to the master
-        }
 
         int nseeds;
         doInitializeRng(argc, argv, &nseeds, parameters);
         int dimension = nseeds * world_size;
         seedMatrix = (unsigned short *) malloc(sizeof(unsigned short) * dimension);
         for(i=0; i<dimension;i++)
-        {
             seedMatrix[i] = (unsigned short) (ran1()*100000);
-        }
     }
 
     // Filter out workers with rank higher than howmany, meaning there are more workers than samples to be generated.
-    if(world_rank < howmany)
-    {
+    if(world_rank < howmany) {
         MPI_Scatter(seedMatrix, 3, MPI_UNSIGNED_SHORT, localSeedMatrix, 3, MPI_UNSIGNED_SHORT, 0, MPI_COMM_WORLD);
 
         /*
@@ -157,26 +151,23 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
 
         MPI_Gather (&rank, 1, struct_rank_type, ranks, 1, struct_rank_type, 0, MPI_COMM_WORLD);
 
-        if ( world_rank == 0 ) // Global master
-        {
+        if (world_rank == 0) { // Global master
             int i, pendingNodeMasters = 0;
 
             // Distribute remaining samples.
-            if ( shm_mode )
-            {
+            if (shm_mode) {
                 int node_count = numberOfNodes(ranks, struct_rank_size);
 
                 // calculate how many samples are going to be distributed among all nodes
                 nodeHowmany = howmany / node_count;
                 int remainder = howmany % node_count;
 
-                // Delegate samples on node where the global master resides to a secondary master node (workd_rank = 1).
+                // Delegate samples on node where the global master resides to a secondary master node (world_rank = 1).
                 int samples = nodeHowmany + remainder;
                 MPI_Send(&samples, 1, MPI_INT, 1, NODE_MASTER_ASSIGNMENT, MPI_COMM_WORLD); // process 1 will output the results
 
                 // Distribute samples among remaining nodes
-                for (i = 1; i < world_size; ++i) // don't include node with global master now
-                {
+                for (i = 1; i < world_size; ++i) {// don't include node with global master now
                     Rank_Struct *r;
                     r = ranks + struct_rank_size * i;
                     if (r->shm_rank == 0) {
@@ -187,25 +178,20 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
 
                 // Receive results from master nodes
                 int source;
-                while ( pendingNodeMasters ) {
+                while (pendingNodeMasters) {
                     shm_results = readResults(MPI_COMM_WORLD, &source);
                     fprintf(stdout, "%s", shm_results);
                     fflush(stdout);
                     free(shm_results);
                     pendingNodeMasters -= 1;
                 }
+            } else { // There is only one node, hence a secondary master is not needed
+                masterProcessingLogic(howmany, 0, parameters, maxsites);
             }
-            else // There is only one node, hence a secondary master is not needed
-            {
-                masterProcessingLogic(howmany, 0);
-            }
-        }
-        else
-        {
-            if ( shm_rank == 0 || ( shm_mode && world_rank == 1 ) )
-            {
+        } else {
+            if (shm_rank == 0 || (shm_mode && world_rank == 1)) {
                 MPI_Recv(&nodeHowmany, 1, MPI_INT, 0, NODE_MASTER_ASSIGNMENT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                masterProcessingLogic(nodeHowmany, 0);
+                masterProcessingLogic(nodeHowmany, 0, parameters, maxsites);
 
             }
             else
@@ -267,23 +253,21 @@ masterWorkerTeardown() {
  * @param lastAssignedProcess last processes that has been assigned som work
  */
 void
-masterProcessingLogic(int howmany, int lastAssignedProcess)
+masterProcessingLogic(int howmany, int lastAssignedProcess, struct params parameters, unsigned int maxsites)
 {
     int *processActivity = (int*) malloc(shm_size * sizeof(int));
     int node_offset = 0;
-    if ( world_rank == 1 )
-    {
+    if (world_rank == 1) { // it is the secondary master located at the main node (where the global master resides)
         node_offset = 1;
         processActivity[1] = 1;
     }
 
-    if ( howmany > 0 ) {
-        processActivity[0] = 1; // Master does not generate replicas
+    if (howmany > 0) {
+        processActivity[0] = 1; // Master initially does not generate replicas
 
         int i;
-        for (i = node_offset+1; i < shm_size; i++) {
+        for (i = node_offset+1; i < shm_size; i++) // secondary master initially does not generate replicas
             processActivity[i] = 0;
-        }
 
         int pendingJobs = howmany; // number of jobs already assigned but pending to be finalized
 
@@ -292,50 +276,45 @@ masterProcessingLogic(int howmany, int lastAssignedProcess)
         size_t offset, length;
         results = malloc(sizeof(char) * 1000);
 
-        while (howmany > 0) {
+        while (howmany > 0) { // Assign sample generation jobs to all available workers
             int idleProcess = findIdleProcess(processActivity, lastAssignedProcess, node_offset);
             if (idleProcess >= 0) {
                 assignWork(processActivity, idleProcess, 1);
                 lastAssignedProcess = idleProcess;
                 howmany--;
-            }
-            else
-            {
-                // we don't really get results from workers when they're located at same node as the global master, but such workers
-                // rather directly output the results. This scenario may only happen when either current rank is 0 (1 node) or 1 (more than 1 node)
-                if (world_rank > 1)
-                {
+            } else {
+                // Collect previously assigned sample generation jobs
+                if (world_rank > 1) { // it is not the main node, hence samples are received using MPI point-to-point
                     sample = readResultsFromWorkers(1, processActivity);
                     offset = strlen(results);
                     length = strlen(sample);
                     results = realloc(results, offset + length + 1);
                     memcpy(results + offset, sample, length);
                     free(sample);
-                }
-                else
-                {
-                    // we need to receive some ACK to verify a sample was outputted by a local worker process
-                    readAckFromLocalWorker(1, processActivity);
-                }
+                } else { // In main node all workers directly outputs the samples, but...
+                    // ...we need to receive some ACK to verify a sample was indeed outputted
+                    int additional_samples = readAckFromLocalWorker(howmany, processActivity, parameters, maxsites);
 
+                    // need to update counters if applicable
+                    pendingJobs -= additional_samples;
+                    howmany -= additional_samples;
+                }
                 pendingJobs--;
             }
         }
 
         while (pendingJobs > 0) {
-            if (world_rank != 0 && shm_rank == 0)
-            {
+            if (world_rank != 0 && shm_rank == 0) {
                 sample = readResultsFromWorkers(0, processActivity);
                 offset = strlen(results);
                 length = strlen(sample);
                 results = realloc(results, offset + length + 1);
                 memcpy(results + offset, sample, length);
                 free(sample);
-            }
-            else
-            {
+            } else {
+                fflush(stdout);
                 // we need to receive some ACK to verify a sample was outputted by a local worker process
-                readAckFromLocalWorker(0, processActivity);
+                readAckFromLocalWorker(0, processActivity, parameters, maxsites);
             }
 
             pendingJobs--;
@@ -350,36 +329,50 @@ masterProcessingLogic(int howmany, int lastAssignedProcess)
         else
         {
             if ( shm_rank == 0 ) // exclude the case where there are more than 1 node, and local master is world_rank=1
-            {
                 MPI_Send(results, strlen(results) + 1, MPI_CHAR, 0, RESULTS_TAG, MPI_COMM_WORLD);
-            }
         }
         free(results); // be good citizen
     }
 }
 
-void
-readAckFromLocalWorker(int goToWork, int *workersActivity)
+
+int readAckFromLocalWorker(int remaining, int *workersActivity, struct params parameters, unsigned int maxsites)
 {
     int source;
+    int goToWork = 0;
+    int additional_samples = 0;
+    MPI_Status status;
+    int msg_avail = 0;
 
-    readAck(&source);
+    ///MPI_Probe(MPI_ANY_SOURCE, ACK_TAG, shmcomm, &status);
+    while (!msg_avail) {
+        // This function is called by secondary master in main node only, hence it is safe to generate an extra sample
+        // and send it to the standard output.
+        MPI_Iprobe(MPI_ANY_SOURCE, ACK_TAG, shmcomm, &msg_avail, &status);
+        if (remaining) { // then generate sample while others reply
+            char *results = generateSamples(1, parameters, maxsites);
+            fprintf(stdout, "%s", results);
+            fflush(stdout);
+            free(results);
+            remaining--;
+            additional_samples++;
+        }
+    }
+
+    source = status.MPI_SOURCE;
+
+    int ack;
+    MPI_Recv(&ack, 1, MPI_INT, source, ACK_TAG, shmcomm, MPI_STATUS_IGNORE);
+
+    // Now let the worker know whether there are (still) any pending samples
+    if (remaining > 0)
+        goToWork = 1;
 
     MPI_Send(&goToWork, 1, MPI_INT, source, GO_TO_WORK_TAG, shmcomm);
 
     workersActivity[source]=0;
-}
 
-void
-readAck(int* source)
-{
-    MPI_Status status;
-
-    MPI_Probe(MPI_ANY_SOURCE, ACK_TAG, shmcomm, &status);
-    *source = status.MPI_SOURCE;
-
-    int ack;
-    MPI_Recv(&ack, 1, MPI_INT, *source, ACK_TAG, shmcomm, MPI_STATUS_IGNORE);
+    return additional_samples;
 }
 
 /*
@@ -555,7 +548,6 @@ generateSample(struct params parameters, unsigned maxsites)
     double probss, tmrca, ttot;
     char *results;
     char **gametes;
-    double *positions;
     struct gensam_result gensamResults;
 
     if( parameters.mp.segsitesin ==  0 )
@@ -564,29 +556,26 @@ generateSample(struct params parameters, unsigned maxsites)
         gametes = cmatrix(parameters.cp.nsam, parameters.mp.segsitesin+1 );
 
     gensamResults = gensam(gametes, &probss, &tmrca, &ttot, parameters, &segsites);
-    positions = gensamResults.positions;
     results = doPrintWorkerResultHeader(segsites, probss, parameters, gensamResults.tree);
     offset = strlen(results);
 
     if(segsites > 0)
     {
-        char *positionsStr = doPrintWorkerResultPositions(segsites, parameters.output_precision, positions);
+        char *positionsStr = doPrintWorkerResultPositions(segsites, parameters.output_precision, gensamResults.positions);
         positionStrLength = strlen(positionsStr);
+
 
         char *gametesStr = doPrintWorkerResultGametes(segsites, parameters.cp.nsam, gametes);
         gametesStrLenght = strlen(gametesStr);
 
         results = realloc(results, offset + positionStrLength + gametesStrLenght + 1);
-
         //sprintf(results, "%s%s", results, positionsStr);
         memcpy(results+offset, positionsStr, positionStrLength+1);
 
         offset += positionStrLength;
         memcpy(results+offset, gametesStr, gametesStrLenght+1);
-
         free(positionsStr);
         free(gametesStr);
-        free(gensamResults.positions);
         if( parameters.mp.timeflag ) {
             free(gensamResults.tree);
         }
@@ -661,6 +650,8 @@ char *doPrintWorkerResultPositions(int segsites, int output_precision, double *p
         offset += positionStrLength;
     }
 
+    free(positionStr);
+
     return results;
 }
 
@@ -706,7 +697,8 @@ void sendResultsToMasterProcess(char* results, int master)
 
         int ack = 1;
         MPI_Send(&ack, 1, MPI_INT, master, ACK_TAG, shmcomm);
-        printf("%s", results);
+        fprintf(stdout, "%s", results);
+        fflush(stdout);
     }
 }
 
