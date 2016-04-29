@@ -145,7 +145,7 @@ int main(int argc, char *argv[]){
 
 	if(world_rank <= howmany && world_rank > excludeFrom && shm_rank != 0 )
 	{
-		while(workerProcess(pars, SITESINC));
+		workerProcess(pars, SITESINC);
 	}
 
 	masterWorkerTeardown();
