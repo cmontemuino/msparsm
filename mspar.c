@@ -335,6 +335,7 @@ masterProcessingLogic(int howmany, int lastAssignedProcess, struct params parame
                 // Note: we do not want to inlude the secondary master here, as it is already sending the samples to the standard output (see readAckFromLocalWorker function)
                 MPI_Send(results, strlen(results) + 1, MPI_CHAR, 0, RESULTS_TAG, MPI_COMM_WORLD);
         }
+
         free(results); // be good citizen
     }
 }
@@ -349,46 +350,33 @@ int readAckFromLocalWorker(int remaining, int *workersActivity, struct params pa
     *goToWork = 0;
 
     MPI_Probe(MPI_ANY_SOURCE, ACK_TAG, shmcomm, &status);
-//    while (!msg_avail) {
-//        // This function is called by secondary master in main node only, hence it is safe to generate an extra sample
-//        // and send it to the standard output.
-//        MPI_Iprobe(MPI_ANY_SOURCE, ACK_TAG, shmcomm, &msg_avail, &status);
-//        if (remaining) { // then generate sample while others reply
-//            char *results = generateSamples(1, parameters, maxsites);
-//            fprintf(stdout, "################%s", results);
-//            fflush(stdout);
-//            free(results);
-//            remaining--;
-//            additional_samples++;
-//        }
-//    }
 
     source = status.MPI_SOURCE;
 
     int ack;
-    //MPI_Recv(&ack, 1, MPI_INT, source, ACK_TAG, shmcomm, MPI_STATUS_IGNORE);
-    MPI_Request requests[2];
-    MPI_Irecv(&ack, 1, MPI_INT, source, ACK_TAG, shmcomm, &requests[0]);
-
-    if (remaining) { // then generate 1 sample while others reply
-        char *results = generateSamples(1, parameters, maxsites);
-        fprintf(stdout, "%s", results);
-        fflush(stdout);
-        free(results);
-        remaining--;
-        additional_samples++;
-    }
+    MPI_Recv(&ack, 1, MPI_INT, source, ACK_TAG, shmcomm, MPI_STATUS_IGNORE);
+//    MPI_Request requests[2];
+//    MPI_Irecv(&ack, 1, MPI_INT, source, ACK_TAG, shmcomm, &requests[0]);
+//
+//    if (remaining) { // then generate 1 sample while others reply
+//        char *results = generateSamples(1, parameters, maxsites);
+//        fprintf(stdout, "%s", results);
+//        fflush(stdout);
+//        free(results);
+//        remaining--;
+//        additional_samples++;
+//    }
 
     // Now let the worker know whether there are (still) any pending samples
     if (remaining > 0)
         *goToWork = 1;
 
-    //MPI_Send(&goToWork, 1, MPI_INT, source, GO_TO_WORK_TAG, shmcomm);
-    MPI_Isend(goToWork, 1, MPI_INT, source, GO_TO_WORK_TAG, shmcomm, &requests[1]);
+    MPI_Send(goToWork, 1, MPI_INT, source, GO_TO_WORK_TAG, shmcomm);
+//    MPI_Isend(goToWork, 1, MPI_INT, source, GO_TO_WORK_TAG, shmcomm, &requests[1]);
 
     workersActivity[source]=0;
 
-    MPI_Waitall(2, requests, MPI_STATUS_IGNORE);
+//    MPI_Waitall(2, requests, MPI_STATUS_IGNORE);
 
     return additional_samples;
 }
