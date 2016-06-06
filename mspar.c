@@ -157,7 +157,7 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
             int *shm_ranks = (int *)malloc(sizeof(int) * world_size);
 
             // Note: elements are ordered by process rank in MPI_COMM_WORLD communicator
-            MPI_Gather (&world_rank, 1, MPI_INT, shm_ranks, 1, MPI_INT, 0, MPI_COMM_WORLD);
+            MPI_Gather (&shm_rank, 1, MPI_INT, shm_ranks, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
             // Calculate number of nodes
             int i = 0;
