@@ -158,12 +158,15 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
 
             // Note: elements are ordered by process rank in MPI_COMM_WORLD communicator
             MPI_Gather (&shm_rank, 1, MPI_INT, shm_ranks, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
             // Calculate number of nodes
             int i = 0;
             int nodes = 0;
-            for (i = 0; i < world_size; i++)
-                if (shm_ranks[i] == 0) nodes++;
+            if (world_rank == 0) {
+                for (i = 0; i < world_size; i++)
+                    if (shm_ranks[i] == 0) nodes++;
+            }
+
+            MPI_Bcast(&nodes, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
             int nodeSamples = howmany / nodes;
             int remainingNodeSamples = howmany % nodes;
