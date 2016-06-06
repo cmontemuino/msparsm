@@ -136,27 +136,110 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
         }
         */
 
-        Rank_Struct rank;
-        MPI_Aint struct_rank_size, struct_rank_size_lb;
+        if (world_size == shm_size) { // There is only one node
+            // No master process is needed. Every MPI process can just output the generated samples
+            int samples = howmany / world_size;
+            int remainder = howmany % world_size;
+
+            if (world_rank == 0) // let the "global master" to generate the remainder samples as well
+                samples += remainder;
+
+            char *results = generateSamples(samples, parameters, maxsites);
+
+            fprintf(stdout, "%s", results);
+            fflush(stdout);
+
+            free(results); // be good citizen
+
+            return world_rank;
+        } else {
+            // Gather all SHM rank (local rank) from all the processes
+            int *shm_ranks = (int *)malloc(sizeof(int) * world_size);
+
+            // Note: elements are ordered by process rank in MPI_COMM_WORLD communicator
+            MPI_Gather (&world_rank, 1, MPI_INT, shm_ranks, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+            // Calculate number of nodes
+            int i = 0;
+            int nodes = 0;
+            for (i = 0; i < world_size; i++)
+                if (shm_ranks[i] == 0) nodes++;
+
+            int nodeSamples = howmany / nodes;
+            int remainingNodeSamples = howmany % nodes;
+            int workerSamples = nodeSamples / (shm_size - 1);
+            int remainingWorkerSamples = nodeSamples % (shm_size - 1);
+
+            if (world_rank != 0 && shm_rank != 0) {
+                char *results = generateSamples(workerSamples, parameters, maxsites);
+                if (world_rank == shm_rank) {
+                    fprintf(stdout, "%s", results);
+                    fflush(stdout);
+
+                    free(results); // be good citizen
+                } else {
+                    // Send results to shm_rank = 0
+                    MPI_Send(results, strlen(results)+1, MPI_CHAR, 0, RESULTS_TAG, shmcomm);
+                }
+            } else {
+                if (world_rank != 0 && shm_rank == 0) {
+                    char *results = malloc(sizeof(char) * 1000);
+                    if (remainingWorkerSamples > 0)
+                        results = generateSamples(remainingWorkerSamples, parameters, maxsites);
+
+                    // Receive samples from workers in same node.
+                    int source;
+                    size_t offset;
+                    size_t length;
+                    for (i = 1; i < nodes; i++){
+                        shm_results = readResults(shmcomm, &source);
+                        offset = strlen(results);
+                        length = strlen(shm_results);
+                        results = realloc(results, offset + length + 1);
+                        memcpy(results + offset, shm_results, length);
+                        free(shm_results);
+                    }
+
+                    // Send gathered results to master in master-node
+                    MPI_Send(results, strlen(shm_results)+1, MPI_CHAR, 0, RESULTS_TAG, MPI_COMM_WORLD);
+                } else {
+                    if (remainingNodeSamples +  remainingWorkerSamples > 0) {
+                        char *results;
+                        results = generateSamples(remainingNodeSamples + remainingWorkerSamples, parameters, maxsites);
+
+                        fprintf(stdout, "%s", results);
+                        fflush(stdout);
+                        free(results);
+                    }
+
+                    // Receive samples from other node masters, each one sending a consolidated message
+                    int source;
+                    for (i = 1; i < nodes; i++){
+                        shm_results = readResults(MPI_COMM_WORLD, &source);
+                        fprintf(stdout, "%s", shm_results);
+                        fflush(stdout);
+                        free(shm_results);
+                    }
+                }
+            }
+
+            return world_rank;
+        }
+
+        MPI_Aint struct_rank_size;
         MPI_Datatype struct_rank_type;
 
-        buildRankDataType(&struct_rank_type);
+        void *ranks = malloc(sizeof(int) * world_size);
 
-        MPI_Type_get_extent(struct_rank_type, &struct_rank_size_lb, &struct_rank_size);
+        int node_count = numberOfNodes(ranks);
 
-        rank.shm_rank = shm_rank;
-        rank.world_rank = world_rank;
-
-        void *ranks = malloc(struct_rank_size * (world_size));
-
-        MPI_Gather (&rank, 1, struct_rank_type, ranks, 1, struct_rank_type, 0, MPI_COMM_WORLD);
+        MPI_Barrier(MPI_COMM_WORLD);
 
         if (world_rank == 0) { // Global master
             int i, pendingNodeMasters = 0;
 
             // Distribute remaining samples.
             if (shm_mode) { // there is more than one node
-                int node_count = numberOfNodes(ranks, struct_rank_size);
 
                 // calculate how many samples are going to be distributed among all nodes
                 nodeHowmany = howmany / node_count;
@@ -214,33 +297,15 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
  * This function is useful to determine the number of node masters.
  */
 int
-numberOfNodes(void *ranks, MPI_Aint rank_size)
+numberOfNodes(void *ranks)
 {
-    int i, result = 0;
-    Rank_Struct *rank;
-    for ( i = 0; i < world_size; i ++) {
-        rank = ranks + rank_size * i;
-        if (rank->shm_rank == 0)
-            result += 1;
+    int result = 1;
+
+    if (shm_rank == 0) {
+        MPI_Gather (&world_rank, 1, MPI_INT, ranks, 1, MPI_INT, 0, MPI_COMM_WORLD);
     }
 
     return result;
-}
-
-void
-buildRankDataType(MPI_Datatype* result) {
-    Rank_Struct rank;
-    {
-        int blocklen[] = {1, 1};
-        MPI_Aint addr[3];
-        MPI_Get_address(&rank, &addr[0]);
-        MPI_Get_address(&rank.shm_rank, &addr[1]);
-        MPI_Get_address(&rank.world_rank, &addr[2]);
-        MPI_Aint displacements[] = {addr[1] - addr[0], addr[2] - addr[0]};
-        MPI_Datatype types[2] = {MPI_INT, MPI_INT};
-        MPI_Type_create_struct(2, blocklen, displacements, types, result);
-        MPI_Type_commit(result);
-    }
 }
 
 void

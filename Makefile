@@ -8,16 +8,16 @@
 CC=mpicc
 
 # Compilation flags
-CFLAGS=-O3 -std=gnu99 -I.
+CFLAGS?=-O3 -std=gnu99 -I.
 
 # define any libraries to link into executable:
-LIBS=-lm
+LIBS?=-lm
 
 # Dependencies
 DEPS=ms.h mspar.h
 
 # Folder to put the generated binaries
-BIN=./bin
+BIN?=./bin
 
 # Object files
 OBJ=$(BIN)/mspar.o $(BIN)/ms.o $(BIN)/streec.o

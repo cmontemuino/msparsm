@@ -21,8 +21,7 @@ char *doPrintWorkerResultPositions(int segsites, int output_precision, double *p
 char *doPrintWorkerResultGametes(int segsites, int nsam, char **gametes);
 
 int readAckFromLocalWorker(int remaining, int *workersActivity, struct params parameters, unsigned int maxsites, int *goToWork);
-int numberOfNodes(void*, MPI_Aint);
-void buildRankDataType(MPI_Datatype*);
+int numberOfNodes(void*);
 char *readResults(MPI_Comm, int*);
 
 /* From ms.c*/
