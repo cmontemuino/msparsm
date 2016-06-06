@@ -204,7 +204,7 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
                     }
 
                     // Send gathered results to master in master-node
-                    MPI_Send(results, strlen(shm_results)+1, MPI_CHAR, 0, RESULTS_TAG, MPI_COMM_WORLD);
+                    MPI_Send(results, strlen(results)+1, MPI_CHAR, 0, RESULTS_TAG, MPI_COMM_WORLD);
                 } else {
                     if (remainingNodeSamples +  remainingWorkerSamples > 0) {
                         char *results;
