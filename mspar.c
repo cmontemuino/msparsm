@@ -194,7 +194,7 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
                     int source;
                     size_t offset;
                     size_t length;
-                    for (i = 1; i < nodes; i++){
+                    for (i = 1; i < shm_size; i++){
                         shm_results = readResults(shmcomm, &source);
                         offset = strlen(results);
                         length = strlen(shm_results);
