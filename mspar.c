@@ -16,6 +16,8 @@ typedef struct {
     int world_rank;
 } Rank_Struct;
 
+int diagnose = 0; // Used for diagnosing the application.
+
 // Following variables are with global scope in order to facilitate its sharing among routines.
 // They are going to be updated in the masterWorkerSetup routine only, which is called only one, therefore there is no
 // risk of race conditions or whatever other concurrency related problem.
@@ -31,6 +33,7 @@ int shm_mode = 0;  // indicates whether MPI-3 SHM is going to be applied
 int
 masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, unsigned int maxsites, int *excludeFrom, int *node_rank)
 {
+    if (getenv("MSPARSM_DIAGNOSE")) diagnose = 1;
     // goToWork         : used by workers to realize if there is more work to do.
     // seedMatrix       : matrix containing the RNG seeds to be distributed to working processes.
     // localSeedMatrix  : matrix used by workers to receive RNG seeds from master.
@@ -144,12 +147,15 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
             if (world_rank == 0) // let the "global master" to generate the remainder samples as well
                 samples += remainder;
 
-            char *results = generateSamples(samples, parameters, maxsites);
+            if (diagnose) {
+                fprintf(stderr, "[%d] -> Generated [%d] samples.\n", world_rank, samples);
+            } else {
+                char *results = generateSamples(samples, parameters, maxsites);
 
-            fprintf(stdout, "%s", results);
-            fflush(stdout);
-
-            free(results); // be good citizen
+                fprintf(stdout, "%s", results);
+                fflush(stdout);
+                free(results); // be good citizen
+            }
 
             return world_rank;
         } else {
@@ -175,20 +181,31 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
 
             if (world_rank != 0 && shm_rank != 0) {
                 char *results = generateSamples(workerSamples, parameters, maxsites);
+                if (diagnose)
+                    fprintf(stderr, "[%d] -> Generated [%d] worker samples.\n", world_rank, workerSamples);
+
                 if (world_rank == shm_rank) {
                     fprintf(stdout, "%s", results);
                     fflush(stdout);
-
                     free(results); // be good citizen
+
+                    if (diagnose)
+                        fprintf(stderr, "[%d] -> Printed [%d] worker samples.\n", world_rank, workerSamples);
                 } else {
                     // Send results to shm_rank = 0
-                    MPI_Send(results, strlen(results)+1, MPI_CHAR, 0, RESULTS_TAG, shmcomm);
+                    MPI_Send(results, strlen(results) + 1, MPI_CHAR, 0, RESULTS_TAG, shmcomm);
+
+                    if (diagnose)
+                        fprintf(stderr, "[%d] -> Sent [%d] worker samples.\n", world_rank, workerSamples);
                 }
             } else {
                 if (world_rank != 0 && shm_rank == 0) {
                     char *results = malloc(sizeof(char) * 1000);
-                    if (remainingWorkerSamples > 0)
+                    if (remainingWorkerSamples > 0) {
                         results = generateSamples(remainingWorkerSamples, parameters, maxsites);
+                        if (diagnose)
+                            fprintf(stderr, "[%d] -> Generated [%d] remaining worker samples.\n", world_rank, remainingWorkerSamples);
+                    }
 
                     // Receive samples from workers in same node.
                     int source;
@@ -205,14 +222,20 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
 
                     // Send gathered results to master in master-node
                     MPI_Send(results, strlen(results)+1, MPI_CHAR, 0, RESULTS_TAG, MPI_COMM_WORLD);
+
+                    if (diagnose)
+                        fprintf(stderr, "[%d] -> Read from [%d] workers.\n", world_rank, i-1);
                 } else {
-                    if (remainingNodeSamples +  remainingWorkerSamples > 0) {
+                    int remaining = remainingNodeSamples +  remainingWorkerSamples;
+                    if (remaining > 0) {
                         char *results;
-                        results = generateSamples(remainingNodeSamples + remainingWorkerSamples, parameters, maxsites);
+                        results = generateSamples(remaining, parameters, maxsites);
 
                         fprintf(stdout, "%s", results);
                         fflush(stdout);
                         free(results);
+                        if (diagnose)
+                            fprintf(stderr, "[%d] -> Generated [%d] remaining samples.\n", world_rank, remaining);
                     }
 
                     // Receive samples from other node masters, each one sending a consolidated message
@@ -223,6 +246,8 @@ masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters,
                         fflush(stdout);
                         free(shm_results);
                     }
+                    if (diagnose)
+                        fprintf(stderr, "[%d] -> Read from [%d] node masters.\n", world_rank, i-1);
                 }
             }
 
