@@ -1,28 +1,21 @@
 #include <mpi.h>
 
-int masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int unsigned maxsites, int *excludeFrom, int *node_rank);
+void masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int unsigned maxsites);
 void masterWorkerTeardown();
-void masterProcessingLogic(int howmany, int lastIdleWorker, struct params parameters, unsigned int maxsites);
-int workerProcess(struct params parameters, unsigned int maxsites);
 void doInitializeRng(int argc, char *argv[], int *seeds, struct params parameters);
-void sendResultsToMasterProcess(char* results, int master);
-int receiveWorkRequest(int *master);
-void assignWork(int* workersActivity, int assignee, int samples);
-char* readResultsFromWorkers(int goToWork, int* workersActivity);
-int findIdleProcess(int *processActivity, int lastAssignedProcess, int node_offset);
-char* generateSample(struct params parameters, unsigned int maxsites);
-char *generateSamples(int, struct params, unsigned);
+char* generateSample(struct params parameters, unsigned int maxsites, int *bytes);
+char *generateSamples(int, struct params, unsigned, int *bytes);
 struct gensam_result gensam(char **gametes, double *probss, double *ptmrca, double *pttot, struct params pars, int* segsites);
-int isThereMoreWork(int master);
-unsigned short* parallelSeed(unsigned short *seedv);
 char *append(char *lhs, const char *rhs);
-char *doPrintWorkerResultHeader(int segsites, double probss, struct params paramters, char *treeOutput);
+char *doPrintWorkerResultHeader(int segsites, double probss, struct params paramters, char *treeOutput, int *bytes);
 char *doPrintWorkerResultPositions(int segsites, int output_precision, double *posit);
 char *doPrintWorkerResultGametes(int segsites, int nsam, char **gametes);
-
-int readAckFromLocalWorker(int remaining, int *workersActivity, struct params parameters, unsigned int maxsites, int *goToWork);
-int numberOfNodes(void*);
-char *readResults(MPI_Comm, int*);
+char *readResults(MPI_Comm comm, int* source, int *bytes);
+unsigned short *initializeSeedMatrix(int argc, char *argv[], int howmany, struct params parameters);
+void singleNodeProcessing(int howmany, struct params parameters, unsigned int maxsites, int *bytes);
+void printSamples(char *results, int bytes);
+void secondaryNodeProcessing(int remaining, struct params parameters, unsigned int maxsites);
+void sendResultsToMaster(char *results, int bytes, MPI_Comm comm);
 
 /* From ms.c*/
 char ** cmatrix(int nsam, int len);

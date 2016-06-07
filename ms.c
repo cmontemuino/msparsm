@@ -138,16 +138,7 @@ int main(int argc, char *argv[]){
 	pars = getpars(argc, argv, &howmany, ntbs, count);
 
 	// Master-Worker
-    int excludeFrom;
-    int shm_rank;
-	int world_rank = masterWorkerSetup(argc, argv, howmany, pars, SITESINC, &excludeFrom, &shm_rank);
-
-/*
-	if(world_rank <= howmany && world_rank > excludeFrom && shm_rank != 0 )
-	{
-		workerProcess(pars, SITESINC);
-	}
-*/
+	masterWorkerSetup(argc, argv, howmany, pars, SITESINC);
 	masterWorkerTeardown();
 }
 
