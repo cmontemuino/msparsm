@@ -1,275 +1,244 @@
-const int SEEDS_COUNT = 3;
-const int SEED_TAG = 100;
-const int SAMPLES_NUMBER_TAG = 200;
-const int RESULTS_TAG = 300;
-const int GO_TO_WORK_TAG = 400;
-
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include "ms.h"
 #include "mspar.h"
-#include <mpi.h> /* OpenMPI library */
+
+const int RESULTS_TAG = 300;
+
+int diagnose = 0; // Used for diagnosing the application.
+
+// Following variables are with global scope in order to facilitate its sharing among routines.
+// They are going to be updated in the masterWorkerSetup routine only, which is called only one, therefore there is no
+// risk of race conditions or whatever other concurrency related problem.
+MPI_Comm shmcomm; // shm intra-communicator
+int world_rank, shm_rank;
+int world_size, shm_size;
 
 // **************************************  //
 // MASTER
 // **************************************  //
-
-int
-masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, int maxsites)
+void singleNodeProcessing(int howmany, struct params parameters, unsigned int maxsites, int *bytes)
 {
-    // myRank           : rank of the current process in the MPI ecosystem.
-    // poolSize         : number of processes in the MPI ecosystem.
-    // goToWork         : used by workers to realize if there is more work to do.
+    // No master process is needed. Every MPI process can just output the generated samples
+    int samples = howmany / world_size;
+    int remainder = howmany % world_size;
+
+    if (world_rank == 0) // let the "global master" to generate the remainder samples as well
+        samples += remainder;
+
+    char *results = generateSamples(samples, parameters, maxsites, bytes);
+    printSamples(results, *bytes);
+}
+
+void printSamples(char *results, int bytes)
+{
+    fprintf(stdout, "%s", results);
+    fflush(stdout);
+
+    if (diagnose)
+        fprintf(stderr, "[%d] -> Printed [%d] bytes.\n", world_rank, bytes);
+
+    free(results); // be good citizen
+}
+
+void secondaryNodeProcessing(int remaining, struct params parameters, unsigned int maxsites)
+{
+    int bytes = 0;
+    char *results = malloc(sizeof(char) * 1000);
+    if (remaining > 0)
+        results = generateSamples(remaining, parameters, maxsites, &bytes);
+
+    // Receive samples from workers in same node.
+    int i;
+    char *shm_results;
+    for (i = 1; i < shm_size; i++){
+        int source, length;
+
+        shm_results = readResults(shmcomm, &source, &length);
+        results = realloc(results, bytes + length + 1);
+        memcpy(results + bytes, shm_results, length);
+        bytes += length + 1;
+        free(shm_results);
+    }
+
+    // Send gathered results to master in master-node
+    sendResultsToMaster(results, bytes, MPI_COMM_WORLD);
+}
+
+void sendResultsToMaster(char *results, int bytes, MPI_Comm comm)
+{
+    MPI_Send(results, bytes + 1, MPI_CHAR, 0, RESULTS_TAG, comm);
+
+    if (diagnose) {
+        char *communicator = "MPI_COMM_WORLD";
+        if (comm != MPI_COMM_WORLD)
+            communicator = "SHM_COMM";
+
+        fprintf(stderr, "[%d] -> Sent [%d] bytes to master in %s.\n", world_rank, bytes + 1, communicator);
+    }
+
+    free(results);
+}
+
+void principalMasterProcessing(int remaining, int nodes, struct params parameters, unsigned int maxsites)
+{
+    int bytes = 0;
+    if (remaining > 0) {
+        char *results = generateSamples(remaining, parameters, maxsites, &bytes);
+        printSamples(results, bytes);
+    }
+
+    // Receive samples from other node masters, each one sending a consolidated message
+    int source, i;
+    char *shm_results;
+    for (i = 1; i < nodes; i++){
+        shm_results = readResults(MPI_COMM_WORLD, &source, &bytes);
+        printSamples(shm_results, bytes);
+    }
+}
+
+int calculateNumberOfNodes()
+{
+    // Gather all SHM rank (local rank) from all the processes
+    int *shm_ranks = (int *)malloc(sizeof(int) * world_size);
+
+    // Note: elements are ordered by process rank in MPI_COMM_WORLD communicator
+    MPI_Gather (&shm_rank, 1, MPI_INT, shm_ranks, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    int i = 0;
+    int nodes = 0;
+    if (world_rank == 0) {
+        for (i = 0; i < world_size; i++)
+            if (shm_ranks[i] == 0) nodes++;
+    }
+
+    return nodes;
+}
+
+int setup(int argc, char *argv[], int howmany, struct params parameters)
+{
     // seedMatrix       : matrix containing the RNG seeds to be distributed to working processes.
     // localSeedMatrix  : matrix used by workers to receive RNG seeds from master.
-    int myRank;
-    int poolSize;
     unsigned short *seedMatrix;
     unsigned short localSeedMatrix[3];
 
+    if (getenv("MSPARSM_DIAGNOSE")) diagnose = 1;
 
     // MPI Initialization
     MPI_Init(&argc, &argv );
-    MPI_Comm_size(MPI_COMM_WORLD, &poolSize);
-    MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
-    if(myRank == 0)
-    {
+    // MPI_COMM_TYPE_SHARED: This type splits the communicator into subcommunicators, each of which can create a shared memory region.
+    MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
+    MPI_Comm_size(shmcomm, &shm_size);
+    MPI_Comm_rank(shmcomm, &shm_rank);
+
+    if (world_rank == 0) { // print out program parameters
         int i;
-        // Only the master process prints out the application's parameters
         for(i=0; i<argc; i++)
-        {
             fprintf(stdout, "%s ",argv[i]);
-        }
-
-        // If there are (not likely) more processes than samples, then the process pull
-        // is cut up to the number of samples. */
-        if(poolSize > howmany)
-        {
-            poolSize = howmany + 1; // the extra 1 is due to the master
-        }
-
-        int nseeds;
-        doInitializeRng(argc, argv, &nseeds, parameters);
-        int dimension = nseeds * poolSize;
-        seedMatrix = (unsigned short *) malloc(sizeof(unsigned short) * dimension);
-        for(i=0; i<dimension;i++)
-        {
-            seedMatrix[i] = (unsigned short) (ran1()*100000);
-        }
+        fflush(stdout);
     }
 
-    // Filter out workers with rank higher than howmany, meaning there are more workers than samples to be generated.
-    if(myRank < howmany)
-    {
-        MPI_Scatter(seedMatrix, 3, MPI_UNSIGNED_SHORT, localSeedMatrix, 3, MPI_UNSIGNED_SHORT, 0, MPI_COMM_WORLD);
-        if(myRank == 0)
-        {
-            // Master Processing
-            masterProcessingLogic(howmany, 0, poolSize, parameters, maxsites);
-        } else
-        {
-            // Worker Processing
-            parallelSeed(localSeedMatrix);
-        }
-    }
+    initializeSeedMatrix(argc, argv, howmany);
 
-    return myRank;
+    int nodes = calculateNumberOfNodes();
+
+    if (diagnose)
+        fprintf(stderr, "[%d] -> SHM Rank=%d, SHM Size=%d, WORLD Size=%d\n", world_rank, shm_rank, shm_size, world_size);
+
+    if(diagnose && world_rank == 0)
+        fprintf(stderr, "[%d] -> # of nodes=%d\n", world_rank, nodes);
+
+    return nodes;
 }
 
-void
-masterWorkerTeardown() {
+void teardown() {
     MPI_Finalize();
 }
 
-/*
- * Logic implemented by the master process.
- *
- * @param howmany total number of replicas to be generated
- * @param lastAssignedProcess last processes that has been assigned som work
- * @param poolSize number of processes in the MPI ecosystem
- * @param parameters parameters used to generate replicas. Used when worker process is the master itself
- * @param maxsites maximum number of sites. Used when worker process is the master itself
- */
-void
-masterProcessingLogic(int howmany, int lastAssignedProcess, int poolSize, struct params parameters, unsigned maxsites)
+void masterWorker(int argc, char *argv[], int howmany, struct params parameters, unsigned int maxsites)
 {
-    char *results;
-    int *processActivity = (int*) malloc(poolSize * sizeof(int));
-    processActivity[0] = 1; // Master does not generate replicas
-    int i;
-    for(i=1; i<poolSize; i++)   processActivity[i] = 0;
+    int nodes = setup(argc, argv, howmany, parameters);
 
-    int pendingJobs = howmany; // number of jobs already assigned but pending to be finalized
+    // Filter out workers with rank higher than howmany, meaning there are more workers than samples to be generated.
+    if(world_rank < howmany) {
+        if (world_size == shm_size) { // There is only one node
+            int bytes;
+            singleNodeProcessing(howmany, parameters, maxsites, &bytes);
+        } else {
+            MPI_Bcast(&nodes, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-    while(howmany > 0)
-    {
-        int idleProcess = findIdleProcess(processActivity, poolSize, lastAssignedProcess);
-        if(idleProcess >= 0)
-        {
-            assignWork(processActivity, idleProcess, 1);
-            lastAssignedProcess = idleProcess;
-            howmany--;
-        }
-        else
-        {
-            readResultsFromWorkers(1, processActivity);
-            pendingJobs--;
+            int nodeSamples = howmany / nodes;
+            int remainingGlobal = howmany % nodes;
+            int workerSamples = nodeSamples / (shm_size - 1);
+            int remainingLocal = nodeSamples % (shm_size - 1);
+
+            if (world_rank != 0 && shm_rank != 0) {
+                int bytes = 0;
+                char *results = generateSamples(workerSamples, parameters, maxsites, &bytes);
+
+                if (world_rank == shm_rank)
+                    printSamples(results, bytes);
+                else  // Send results to shm_rank = 0
+                    sendResultsToMaster(results, bytes, shmcomm);
+            } else {
+                if (world_rank != 0 && shm_rank == 0) {
+                    secondaryNodeProcessing(remainingLocal, parameters, maxsites);
+                } else
+                    principalMasterProcessing(remainingGlobal +  remainingLocal, nodes, parameters, maxsites);
+            }
         }
     }
-    while(pendingJobs > 0)
-    {
-        readResultsFromWorkers(0, processActivity);
-        pendingJobs--;
-    }
+
+    teardown();
 }
 
-/*
- *
- * Esta función realiza dos tareas: por un lado hace que el Master escuche los resultados enviados por los workers y por
- * otro lado, se envía al worker que se ha recibido la información un mensaje sobre si debe seguir esperando por
- * trabajos o si ha de finalizar su contribución al sistema.
- *
- * @param goToWork indica si el worker queda en espera de más trabajo (1) o si ya puede finalizar su ejecución (0)
- * @param workersActivity el vector con el estado de actividad de los workers
- * @return
- *
- */
-void readResultsFromWorkers(int goToWork, int* workersActivity)
+char *readResults(MPI_Comm comm, int *source, int *bytes)
 {
     MPI_Status status;
-    int size;
-    int source;
 
-    MPI_Probe(MPI_ANY_SOURCE, RESULTS_TAG, MPI_COMM_WORLD, &status);
-    MPI_Get_count(&status, MPI_CHAR, &size);
-    source = status.MPI_SOURCE;
-    char * results = (char *) malloc(size*sizeof(char));
+    MPI_Probe(MPI_ANY_SOURCE, RESULTS_TAG, comm, &status);
+    MPI_Get_count(&status, MPI_CHAR, bytes);
+    *source = status.MPI_SOURCE;
 
-    MPI_Recv(results, size, MPI_CHAR, source, RESULTS_TAG, MPI_COMM_WORLD, &status);
-    source = status.MPI_SOURCE;
-    MPI_Send(&goToWork, 1, MPI_INT, source, GO_TO_WORK_TAG, MPI_COMM_WORLD);
+    char *results = (char *) malloc(*bytes * sizeof(char));
 
-    workersActivity[source]=0;
-    fprintf(stdout, "%s", results);
-    free(results); // be good citizen
-}
+    MPI_Recv(results, *bytes, MPI_CHAR, *source, RESULTS_TAG, comm, MPI_STATUS_IGNORE);
 
-/*
- * Finds an idle process from a list of potential worker processes.
- *
- * @param workersActivity status of all processes that can generate some work (0=idle; 1=busy)
- * @param poolSize number of worker processes
- * @lastAssignedProcess last process assigned with some work
- *
- * @return idle process index or -1 if all processes are busy.
- */
-int findIdleProcess(int *processActivity, int poolSize, int lastAssignedProcess) {
-    /*
-     * Implementation note: lastAssignedProcess is used to implement a fairness policy in which every available process
-     * can be assigned with some work.
-     */
-    int result = -1;
-    int i= lastAssignedProcess+1; // master process does not generate replicas
-    while(i < poolSize && processActivity[i] == 1){
-        i++;
-    };
-
-    if(i >= poolSize){
-        i=1; // master process does not generate replicas
-        while(i < lastAssignedProcess && processActivity[i] == 1){
-            i++;
-        }
-
-        if(i <= lastAssignedProcess && processActivity[i] == 0){
-            result = i;
-        }
-    } else {
-        result = i;
-    }
-
-    return result;
-}
-
-/*
- * Assigns samples to the workers. This implies to send the number of samples to be generated..
- *
- * @param workersActivity worker's state (0=idle; 1=busy)
- * @param worker worker's index to whom a sample is going to be assigned
- * @param samples samples the worker is going to generate
- */
-void assignWork(int* workersActivity, int worker, int samples) {
-    MPI_Send(&samples, 1, MPI_INT, worker, SAMPLES_NUMBER_TAG, MPI_COMM_WORLD);
-    //TODO check usage of MPI_Sendv??
-    workersActivity[worker]=1;
-}
-
-// **************************************  //
-// WORKERS
-// **************************************  //
-
-int
-workerProcess(struct params parameters, unsigned maxsites)
-{
-    char *generateSamples(int, struct params, unsigned);
-
-    int samples;
-    char *results;
-
-    samples = receiveWorkRequest();
-    results = generateSamples(samples, parameters, maxsites);
-
-    sendResultsToMasterProcess(results);
-
-    free(results); // be good citizen
-    return isThereMoreWork();
-}
-
-char *generateSamples(int samples, struct params parameters, unsigned maxsites)
-{
-    char *results;
-    char *sample;
-    size_t offset, length;
-
-    results = generateSample(parameters, maxsites);
-
-    int i;
-    for (i = 1; i < samples; ++i) {
-        sample = generateSample(parameters, maxsites);
-
-        offset = strlen(results);
-        length = strlen(sample);
-
-        results = realloc(results, offset + length + 1);
-
-        memcpy(results+offset, sample, length);
-        free(sample);
-    }
+    if (diagnose)
+        fprintf(stderr, "[%d] -> Read [%d] bytes from worker %d.\n", world_rank, *bytes, *source);
 
     return results;
 }
 
-/*
- * Receives the sample's quantity the Master process asked to be generated.
- *
- * @return samples to be generated
- */
-int receiveWorkRequest(){
-    int samples;
-    MPI_Status status;
+char *generateSamples(int samples, struct params parameters, unsigned maxsites, int *bytes)
+{
+    char *results;
+    char *sample;
+    int length;
 
-    MPI_Recv(&samples, 1, MPI_INT, 0, SAMPLES_NUMBER_TAG, MPI_COMM_WORLD, &status);
-    return samples;
-}
+    results = generateSample(parameters, maxsites, &length);
+    *bytes = length;
 
-int isThereMoreWork() {
-    int goToWork;
-    MPI_Status status;
+    int i;
+    for (i = 1; i < samples; ++i) {
+        sample = generateSample(parameters, maxsites, &length);
 
-    MPI_Recv(&goToWork, 1, MPI_INT, 0, GO_TO_WORK_TAG, MPI_COMM_WORLD, &status);
+        results = realloc(results, *bytes + length + 1);
 
-    return goToWork;
+        memcpy(results + *bytes, sample, length);
+
+        *bytes += length + 1;
+        free(sample);
+    }
+
+    if (diagnose)
+        fprintf(stderr, "[%d] -> Generated [%d] samples.\n", world_rank, samples);
+
+    return results;
 }
 
 /*
@@ -279,15 +248,13 @@ int isThereMoreWork() {
  *
  * @return the sample generated by the worker
  */
-char*
-generateSample(struct params parameters, unsigned maxsites)
+char* generateSample(struct params parameters, unsigned maxsites, int *bytes)
 {
-    int segsites;
-    size_t positionStrLength, gametesStrLenght, offset;
+    int segsites, offset;
+    size_t positionStrLength, gametesStrLenght;
     double probss, tmrca, ttot;
     char *results;
     char **gametes;
-    double *positions;
     struct gensam_result gensamResults;
 
     if( parameters.mp.segsitesin ==  0 )
@@ -296,33 +263,31 @@ generateSample(struct params parameters, unsigned maxsites)
         gametes = cmatrix(parameters.cp.nsam, parameters.mp.segsitesin+1 );
 
     gensamResults = gensam(gametes, &probss, &tmrca, &ttot, parameters, &segsites);
-    positions = gensamResults.positions;
-    results = doPrintWorkerResultHeader(segsites, probss, parameters, gensamResults.tree);
-    offset = strlen(results);
+    results = doPrintWorkerResultHeader(segsites, probss, parameters, gensamResults.tree, &offset);
 
     if(segsites > 0)
     {
-        char *positionsStr = doPrintWorkerResultPositions(segsites, parameters.output_precision, positions);
+        char *positionsStr = doPrintWorkerResultPositions(segsites, parameters.output_precision, gensamResults.positions);
         positionStrLength = strlen(positionsStr);
+
 
         char *gametesStr = doPrintWorkerResultGametes(segsites, parameters.cp.nsam, gametes);
         gametesStrLenght = strlen(gametesStr);
 
         results = realloc(results, offset + positionStrLength + gametesStrLenght + 1);
-
         //sprintf(results, "%s%s", results, positionsStr);
         memcpy(results+offset, positionsStr, positionStrLength+1);
 
         offset += positionStrLength;
         memcpy(results+offset, gametesStr, gametesStrLenght+1);
-
         free(positionsStr);
         free(gametesStr);
-        free(gensamResults.positions);
         if( parameters.mp.timeflag ) {
             free(gensamResults.tree);
         }
     }
+
+    *bytes = offset;
 
     return results;
 }
@@ -334,7 +299,7 @@ generateSample(struct params parameters, unsigned maxsites)
  *    // xxx.x xx.xx x.xxxx x.xxxx
  *    segsites: xxx
  */
-char *doPrintWorkerResultHeader(int segsites, double probss, struct params pars, char *treeOutput){
+char *doPrintWorkerResultHeader(int segsites, double probss, struct params pars, char *treeOutput, int *bytes){
     char *results;
 
     int length = 3 + 1; // initially "\n//" and optionally a "\n" when there is no treeOutput;
@@ -356,16 +321,18 @@ char *doPrintWorkerResultHeader(int segsites, double probss, struct params pars,
     sprintf(results, "\n//");
 
     if( (segsites > 0 ) || ( pars.mp.theta > 0.0 ) ) {
-        if( pars.mp.treeflag ) {
+        if( pars.mp.treeflag )
             sprintf(results, "%s%s", results, treeOutput);
-        } else {
+        else
             sprintf(results, "%s%s", results, "\n");
-        }
-        if( (pars.mp.segsitesin > 0 ) && ( pars.mp.theta > 0.0 )) {
+
+        if( (pars.mp.segsitesin > 0 ) && ( pars.mp.theta > 0.0 ))
             sprintf(results, "%sprob: %g\n", results, probss);
-        }
+
         sprintf(results, "%ssegsites: %d\n", results, segsites);
     }
+
+    *bytes = length;
 
     return results;
 }
@@ -393,6 +360,8 @@ char *doPrintWorkerResultPositions(int segsites, int output_precision, double *p
         offset += positionStrLength;
     }
 
+    free(positionStr);
+
     return results;
 }
 
@@ -412,24 +381,12 @@ char *doPrintWorkerResultGametes(int segsites, int nsam, char **gametes){
     char *gameteStr = malloc(sizeof(char) * gameteStrLength * nsam);
 
     for(i=0;i<nsam; i++) {
-        //sprintf(results, "%s%s\n", results, gametes[i]);
         sprintf(gameteStr, "%s\n ", gametes[i]);
         memcpy(results+offset, gameteStr, gameteStrLength+2);
         offset += gameteStrLength;
     }
 
     return results;
-}
-
-/*
- * Sent Worker's results to the Master process.
- *
- * @param results results to be sent
- *
- */
-void sendResultsToMasterProcess(char* results)
-{
-    MPI_Send(results, strlen(results)+1, MPI_CHAR, 0, RESULTS_TAG, MPI_COMM_WORLD);
 }
 
 // **************************************  //
@@ -453,8 +410,7 @@ void sendResultsToMasterProcess(char* results)
  *    A pointer to the new string (rhs appended to lhs)
  *
  *------------------------------------------------------------*/
-char *
-append(char *lhs, const char *rhs)
+char *append(char *lhs, const char *rhs)
 {
     const size_t len1 = strlen(lhs);
     const size_t len2 = strlen(rhs);
@@ -466,39 +422,62 @@ append(char *lhs, const char *rhs)
     strcpy(buffer+len1, rhs);
 
     return buffer;
-} /* append */
-
-/* Initialization of the random generator. */
-unsigned short * parallelSeed(unsigned short *seedv){
-    unsigned short *seed48();
-
-    return seed48(seedv);
 }
 
 /*
- * name: doInitializeRng
- * description: En caso de especificarse las semillas para inicializar el RGN,
- *              se llama a la función commandlineseed que se encuentra en el
- *              fichero del RNG.
+ * doInitializeRng - Initializes the Random Number Generator
+ * @argc number of arguments passed to the program
+ * @argv array holding the arguments passed to the program
  *
- * @param argc la cantidad de argumentos que se recibió por línea de comandos
- * @param argv el vector que tiene los valores de cada uno de los argumentos recibidos
+ * Reads the RGN seeds from command arguments and use them for initialize
+ * the RGN that will generate the seeds that worker process will use
+ * for initialize their own RGN.
+ *
+ * This function must be called by the master process located at the
+ * main node only.
  */
-void
-doInitializeRng(int argc, char *argv[], int *seeds, struct params parameters)
+int doInitializeRng(int argc, char *argv[])
 {
-    int commandlineseed(char **);
     int arg = 0;
+    int result = 0;
 
     while(arg < argc){
         switch(argv[arg++][1]){
-            case 's':
-                if(argv[arg-1][2] == 'e'){
-                    // Tanto 'pars' como 'nseeds' son variables globales
-                    parameters.commandlineseedflag = 1;
-                    *seeds = commandlineseed(argv+arg);
-                }
-                break;
+        case 's':
+            if(argv[arg-1][2] == 'e')
+                commandlineseed(argv+arg);
+            break;
+        default:
+            continue;
         }
     }
+
+    return result;
+}
+
+void initializeSeedMatrix(int argc, char *argv[], int howmany) {
+    int i;
+    int size = world_size;
+
+    // If there are (not likely) more processes than samples, then the process pool
+    // is cut up to the number of samples. */
+    if(world_size > howmany)
+        size = howmany + 1; // the extra 1 is due to the master
+
+    int dimension = 3 * size;
+    unsigned short *seedMatrix = (unsigned short *) malloc(sizeof(unsigned short) * dimension);
+
+    if (world_rank == 0) {
+        doInitializeRng(argc, argv);
+
+        for(i=0; i<dimension;i++)
+            seedMatrix[i] = (unsigned short) (ran1()*100000);
+
+    }
+
+    unsigned short localSeedMatrix[3];
+    MPI_Scatter(seedMatrix, 3, MPI_UNSIGNED_SHORT, localSeedMatrix, 3, MPI_UNSIGNED_SHORT, 0, MPI_COMM_WORLD);
+
+    if (world_rank != 0)
+        seed48(localSeedMatrix);
 }

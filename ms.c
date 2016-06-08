@@ -122,7 +122,6 @@ int main(int argc, char *argv[]){
 	char **tbsparamstrs ;
 	double probss, tmrca, ttot ;
 	struct params pars ;
-	void seedit( const char * ) ;
 	struct params getpars( int argc, char *argv[], int *howmany, int ntbs, int count )  ;
 
 	int samples;
@@ -139,14 +138,7 @@ int main(int argc, char *argv[]){
 	pars = getpars(argc, argv, &howmany, ntbs, count);
 
 	// Master-Worker
-	int myRank = masterWorkerSetup(argc, argv, howmany, pars, SITESINC);
-
-	if(myRank <= howmany && myRank > 0)
-	{
-		while(workerProcess(pars, SITESINC));
-	}
-
-	masterWorkerTeardown();
+	masterWorker(argc, argv, howmany, pars, SITESINC);
 }
 
 struct gensam_result
@@ -206,7 +198,7 @@ gensam( char **list, double *pprobss, double *ptmrca, double *pttot, struct para
 				free(seglst[seg].ptree) ;
 		}
 		result.tree = treeOutput;
-		printf(treeOutput);
+		printf("%s", treeOutput);
 	}
 
 	if( pars.mp.timeflag ) {
