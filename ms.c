@@ -138,8 +138,7 @@ int main(int argc, char *argv[]){
 	pars = getpars(argc, argv, &howmany, ntbs, count);
 
 	// Master-Worker
-	masterWorkerSetup(argc, argv, howmany, pars, SITESINC);
-	masterWorkerTeardown();
+	masterWorker(argc, argv, howmany, pars, SITESINC);
 }
 
 struct gensam_result

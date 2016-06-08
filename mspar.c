@@ -14,7 +14,6 @@ int diagnose = 0; // Used for diagnosing the application.
 MPI_Comm shmcomm; // shm intra-communicator
 int world_rank, shm_rank;
 int world_size, shm_size;
-int shm_mode = 0;  // indicates whether MPI-3 SHM is going to be applied
 
 // **************************************  //
 // MASTER
@@ -82,15 +81,49 @@ void sendResultsToMaster(char *results, int bytes, MPI_Comm comm)
     free(results);
 }
 
-void masterWorkerSetup(int argc, char *argv[], int howmany, struct params parameters, unsigned int maxsites)
+void principalMasterProcessing(int remaining, int nodes, struct params parameters, unsigned int maxsites)
 {
-    if (getenv("MSPARSM_DIAGNOSE")) diagnose = 1;
+    int bytes = 0;
+    if (remaining > 0) {
+        char *results = generateSamples(remaining, parameters, maxsites, &bytes);
+        printSamples(results, bytes);
+    }
+
+    // Receive samples from other node masters, each one sending a consolidated message
+    int source, i;
+    char *shm_results;
+    for (i = 1; i < nodes; i++){
+        shm_results = readResults(MPI_COMM_WORLD, &source, &bytes);
+        printSamples(shm_results, bytes);
+    }
+}
+
+int calculateNumberOfNodes()
+{
+    // Gather all SHM rank (local rank) from all the processes
+    int *shm_ranks = (int *)malloc(sizeof(int) * world_size);
+
+    // Note: elements are ordered by process rank in MPI_COMM_WORLD communicator
+    MPI_Gather (&shm_rank, 1, MPI_INT, shm_ranks, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    int i = 0;
+    int nodes = 0;
+    if (world_rank == 0) {
+        for (i = 0; i < world_size; i++)
+            if (shm_ranks[i] == 0) nodes++;
+    }
+
+    return nodes;
+}
+
+int setup(int argc, char *argv[], int howmany, struct params parameters)
+{
     // seedMatrix       : matrix containing the RNG seeds to be distributed to working processes.
     // localSeedMatrix  : matrix used by workers to receive RNG seeds from master.
     unsigned short *seedMatrix;
     unsigned short localSeedMatrix[3];
 
-    char *shm_results; // memory place where all MPI process from one node will going to share
+    if (getenv("MSPARSM_DIAGNOSE")) diagnose = 1;
 
     // MPI Initialization
     MPI_Init(&argc, &argv );
@@ -102,74 +135,61 @@ void masterWorkerSetup(int argc, char *argv[], int howmany, struct params parame
     MPI_Comm_size(shmcomm, &shm_size);
     MPI_Comm_rank(shmcomm, &shm_rank);
 
-    if (shm_size != world_size) // there are MPI process in more than 1 computing node
-        shm_mode = 1;
-
     if(world_rank == 0)
         seedMatrix = initializeSeedMatrix(argc, argv, howmany, parameters);
 
+    MPI_Scatter(seedMatrix, 3, MPI_UNSIGNED_SHORT, localSeedMatrix, 3, MPI_UNSIGNED_SHORT, 0, MPI_COMM_WORLD);
+
+    int nodes = calculateNumberOfNodes();
+
+    if (diagnose)
+        fprintf(stderr, "[%d] -> SHM Rank=%d, SHM Size=%d, WORLD Size=%d\n", world_rank, shm_rank, shm_size, world_size);
+
+    if(diagnose && world_rank == 0)
+        fprintf(stderr, "[%d] -> # of nodes=%d\n", world_rank, nodes);
+
+    return nodes;
+}
+
+void teardown() {
+    MPI_Finalize();
+}
+
+void masterWorker(int argc, char *argv[], int howmany, struct params parameters, unsigned int maxsites)
+{
+    int nodes = setup(argc, argv, howmany, parameters);
+
     // Filter out workers with rank higher than howmany, meaning there are more workers than samples to be generated.
     if(world_rank < howmany) {
-        MPI_Scatter(seedMatrix, 3, MPI_UNSIGNED_SHORT, localSeedMatrix, 3, MPI_UNSIGNED_SHORT, 0, MPI_COMM_WORLD);
-
         if (world_size == shm_size) { // There is only one node
             int bytes;
             singleNodeProcessing(howmany, parameters, maxsites, &bytes);
         } else {
-            // Gather all SHM rank (local rank) from all the processes
-            int *shm_ranks = (int *)malloc(sizeof(int) * world_size);
-
-            // Note: elements are ordered by process rank in MPI_COMM_WORLD communicator
-            MPI_Gather (&shm_rank, 1, MPI_INT, shm_ranks, 1, MPI_INT, 0, MPI_COMM_WORLD);
-            // Calculate number of nodes
-            int i = 0;
-            int nodes = 0;
-            if (world_rank == 0) {
-                for (i = 0; i < world_size; i++)
-                    if (shm_ranks[i] == 0) nodes++;
-            }
-
             MPI_Bcast(&nodes, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
             int nodeSamples = howmany / nodes;
-            int remainingNodeSamples = howmany % nodes;
+            int remainingGlobal = howmany % nodes;
             int workerSamples = nodeSamples / (shm_size - 1);
-            int remainingWorkerSamples = nodeSamples % (shm_size - 1);
+            int remainingLocal = nodeSamples % (shm_size - 1);
 
-            int bytes = 0;
             if (world_rank != 0 && shm_rank != 0) {
+                int bytes = 0;
                 char *results = generateSamples(workerSamples, parameters, maxsites, &bytes);
 
                 if (world_rank == shm_rank)
                     printSamples(results, bytes);
-                else
-                    // Send results to shm_rank = 0
+                else  // Send results to shm_rank = 0
                     sendResultsToMaster(results, bytes, shmcomm);
             } else {
                 if (world_rank != 0 && shm_rank == 0) {
-                    secondaryNodeProcessing(remainingWorkerSamples, parameters, maxsites);;
-                } else {
-                    bytes = 0;
-                    int remaining = remainingNodeSamples +  remainingWorkerSamples;
-                    if (remaining > 0) {
-                        char *results = generateSamples(remaining, parameters, maxsites, &bytes);
-                        printSamples(results, bytes);
-                    }
-
-                    // Receive samples from other node masters, each one sending a consolidated message
-                    int source;
-                    for (i = 1; i < nodes; i++){
-                        shm_results = readResults(MPI_COMM_WORLD, &source, &bytes);
-                        printSamples(shm_results, bytes);
-                    }
-                }
+                    secondaryNodeProcessing(remainingLocal, parameters, maxsites);
+                } else
+                    principalMasterProcessing(remainingGlobal +  remainingLocal, nodes, parameters, maxsites);
             }
         }
     }
-}
 
-void masterWorkerTeardown() {
-    MPI_Finalize();
+    teardown();
 }
 
 char *readResults(MPI_Comm comm, int *source, int *bytes)
@@ -446,6 +466,7 @@ unsigned short *initializeSeedMatrix(int argc, char *argv[], int howmany, struct
 
     int dimension = nseeds * world_size;
     unsigned short *seedMatrix = (unsigned short *) malloc(sizeof(unsigned short) * dimension);
+
     for(i=0; i<dimension;i++)
         seedMatrix[i] = (unsigned short) (ran1()*100000);
 
