@@ -135,10 +135,14 @@ int setup(int argc, char *argv[], int howmany, struct params parameters)
     MPI_Comm_size(shmcomm, &shm_size);
     MPI_Comm_rank(shmcomm, &shm_rank);
 
-    if(world_rank == 0)
-        seedMatrix = initializeSeedMatrix(argc, argv, howmany, parameters);
+    if (world_rank == 0) { // print out program parameters
+        int i;
+        for(i=0; i<argc; i++)
+            fprintf(stdout, "%s ",argv[i]);
+        fflush(stdout);
+    }
 
-    MPI_Scatter(seedMatrix, 3, MPI_UNSIGNED_SHORT, localSeedMatrix, 3, MPI_UNSIGNED_SHORT, 0, MPI_COMM_WORLD);
+    initializeSeedMatrix(argc, argv, howmany);
 
     int nodes = calculateNumberOfNodes();
 
@@ -377,7 +381,6 @@ char *doPrintWorkerResultGametes(int segsites, int nsam, char **gametes){
     char *gameteStr = malloc(sizeof(char) * gameteStrLength * nsam);
 
     for(i=0;i<nsam; i++) {
-        //sprintf(results, "%s%s\n", results, gametes[i]);
         sprintf(gameteStr, "%s\n ", gametes[i]);
         memcpy(results+offset, gameteStr, gameteStrLength+2);
         offset += gameteStrLength;
@@ -419,56 +422,62 @@ char *append(char *lhs, const char *rhs)
     strcpy(buffer+len1, rhs);
 
     return buffer;
-} /* append */
+}
 
 /*
- * name: doInitializeRng
- * description: En caso de especificarse las semillas para inicializar el RGN,
- *              se llama a la función commandlineseed que se encuentra en el
- *              fichero del RNG.
+ * doInitializeRng - Initializes the Random Number Generator
+ * @argc number of arguments passed to the program
+ * @argv array holding the arguments passed to the program
  *
- * @param argc la cantidad de argumentos que se recibió por línea de comandos
- * @param argv el vector que tiene los valores de cada uno de los argumentos recibidos
+ * Reads the RGN seeds from command arguments and use them for initialize
+ * the RGN that will generate the seeds that worker process will use
+ * for initialize their own RGN.
+ *
+ * This function must be called by the master process located at the
+ * main node only.
  */
-void
-doInitializeRng(int argc, char *argv[], int *seeds, struct params parameters)
+int doInitializeRng(int argc, char *argv[])
 {
-    int commandlineseed(char **);
     int arg = 0;
+    int result = 0;
 
     while(arg < argc){
         switch(argv[arg++][1]){
-            case 's':
-                if(argv[arg-1][2] == 'e'){
-                    // Tanto 'pars' como 'nseeds' son variables globales
-                    parameters.commandlineseedflag = 1;
-                    *seeds = commandlineseed(argv+arg);
-                }
-                break;
+        case 's':
+            if(argv[arg-1][2] == 'e')
+                commandlineseed(argv+arg);
+            break;
+        default:
+            continue;
         }
     }
+
+    return result;
 }
 
-// this function should be call by the master in the master node only
-unsigned short *initializeSeedMatrix(int argc, char *argv[], int howmany, struct params parameters) {
+void initializeSeedMatrix(int argc, char *argv[], int howmany) {
     int i;
-    for(i=0; i<argc; i++) {
-        fprintf(stdout, "%s ",argv[i]);
-        fflush(stdout);
-    }
-    // If there are (not likely) more processes than samples, then the process pull
+    int size = world_size;
+
+    // If there are (not likely) more processes than samples, then the process pool
     // is cut up to the number of samples. */
     if(world_size > howmany)
-        world_size = howmany + 1; // the extra 1 is due to the master
+        size = howmany + 1; // the extra 1 is due to the master
 
-    int nseeds;
-    doInitializeRng(argc, argv, &nseeds, parameters);
-
-    int dimension = nseeds * world_size;
+    int dimension = 3 * size;
     unsigned short *seedMatrix = (unsigned short *) malloc(sizeof(unsigned short) * dimension);
 
-    for(i=0; i<dimension;i++)
-        seedMatrix[i] = (unsigned short) (ran1()*100000);
+    if (world_rank == 0) {
+        doInitializeRng(argc, argv);
 
-    return seedMatrix;
+        for(i=0; i<dimension;i++)
+            seedMatrix[i] = (unsigned short) (ran1()*100000);
+
+    }
+
+    unsigned short localSeedMatrix[3];
+    MPI_Scatter(seedMatrix, 3, MPI_UNSIGNED_SHORT, localSeedMatrix, 3, MPI_UNSIGNED_SHORT, 0, MPI_COMM_WORLD);
+
+    if (world_rank != 0)
+        seed48(localSeedMatrix);
 }
