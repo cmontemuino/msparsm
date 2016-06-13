@@ -1,6 +1,5 @@
 #
-#
-# 'make'            make executable file 'mspar'
+# 'make'            make executable file 'msparsm'
 # 'make clean'      removes all .o and executable files
 #
 
@@ -33,14 +32,7 @@ RND=rand2.c
 $(BIN)/%.o: %.c $(DEPS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-default: $(BIN)/mspar
-
-# download: packages
-#	wget http://www.open-mpi.org/software/ompi/v1.8/downloads/openmpi-1.8.2.tar.gz
-#	tar -xf openmpi-1.8.2.tar.gz -C $(CURDIR)/packages
-
-#packages:
-#	mkdir packages
+default: $(BIN)/msparsm
 
 clean:
 	rm -f $(BIN)/*
@@ -48,7 +40,7 @@ clean:
 	@echo "*** All resources were cleaned-up ***"
 	@echo ""
 
-$(BIN)/mspar: $(OBJ)
+$(BIN)/msparsm: $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ $(RND_48) $(LIBS)
 	@echo ""
-	@echo "*** make complete: generated executable 'mspar' ***"
+	@echo "*** make complete: generated executable 'bin/msparsm' ***"
