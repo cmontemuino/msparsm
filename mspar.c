@@ -250,8 +250,8 @@ char *generateSamples(int samples, struct params parameters, unsigned maxsites, 
  */
 char* generateSample(struct params parameters, unsigned maxsites, int *bytes)
 {
-    int segsites, offset;
-    size_t positionStrLength, gametesStrLenght;
+    int segsites;
+    size_t offset, positionStrLength, gametesStrLenght;
     double probss, tmrca, ttot;
     char *results;
     char **gametes;
@@ -263,31 +263,37 @@ char* generateSample(struct params parameters, unsigned maxsites, int *bytes)
         gametes = cmatrix(parameters.cp.nsam, parameters.mp.segsitesin+1 );
 
     gensamResults = gensam(gametes, &probss, &tmrca, &ttot, parameters, &segsites);
-    results = doPrintWorkerResultHeader(segsites, probss, parameters, gensamResults.tree, &offset);
+
+    results = doPrintWorkerResultHeader(segsites, probss, parameters, gensamResults.tree);
+
+    offset = strlen(results);
+    *bytes = offset;
 
     if(segsites > 0)
     {
         char *positionsStr = doPrintWorkerResultPositions(segsites, parameters.output_precision, gensamResults.positions);
         positionStrLength = strlen(positionsStr);
 
-
         char *gametesStr = doPrintWorkerResultGametes(segsites, parameters.cp.nsam, gametes);
         gametesStrLenght = strlen(gametesStr);
 
-        results = realloc(results, offset + positionStrLength + gametesStrLenght + 1);
-        //sprintf(results, "%s%s", results, positionsStr);
+        results = realloc(results, offset + positionStrLength + gametesStrLenght + 2);
+
         memcpy(results+offset, positionsStr, positionStrLength+1);
 
         offset += positionStrLength;
+        *bytes += positionStrLength;
+
         memcpy(results+offset, gametesStr, gametesStrLenght+1);
+
+        *bytes += gametesStrLenght;
+
         free(positionsStr);
         free(gametesStr);
         if( parameters.mp.timeflag ) {
             free(gensamResults.tree);
         }
     }
-
-    *bytes = offset;
 
     return results;
 }
@@ -299,7 +305,7 @@ char* generateSample(struct params parameters, unsigned maxsites, int *bytes)
  *    // xxx.x xx.xx x.xxxx x.xxxx
  *    segsites: xxx
  */
-char *doPrintWorkerResultHeader(int segsites, double probss, struct params pars, char *treeOutput, int *bytes){
+char *doPrintWorkerResultHeader(int segsites, double probss, struct params pars, char *treeOutput){
     char *results;
 
     int length = 3 + 1; // initially "\n//" and optionally a "\n" when there is no treeOutput;
@@ -331,8 +337,6 @@ char *doPrintWorkerResultHeader(int segsites, double probss, struct params pars,
 
         sprintf(results, "%ssegsites: %d\n", results, segsites);
     }
-
-    *bytes = length;
 
     return results;
 }
