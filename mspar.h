@@ -8,7 +8,7 @@ char* generateSample(struct params parameters, unsigned int maxsites, int *bytes
 char *generateSamples(int, struct params, unsigned, int *bytes);
 struct gensam_result gensam(char **gametes, double *probss, double *ptmrca, double *pttot, struct params pars, int* segsites);
 char *append(char *lhs, const char *rhs);
-char *doPrintWorkerResultHeader(int segsites, double probss, struct params paramters, char *treeOutput);
+char *doPrintWorkerResultHeader(int segsites, double probss, struct params paramters, char *treeOutput, int *bytes);
 char *doPrintWorkerResultPositions(int segsites, int output_precision, double *posit);
 char *doPrintWorkerResultGametes(int segsites, int nsam, char **gametes);
 char *readResults(MPI_Comm comm, int* source, int *bytes);
