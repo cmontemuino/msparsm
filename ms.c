@@ -198,7 +198,6 @@ gensam( char **list, double *pprobss, double *ptmrca, double *pttot, struct para
 				free(seglst[seg].ptree) ;
 		}
 		result.tree = treeOutput;
-		printf("%s", treeOutput);
 	}
 
 	if( pars.mp.timeflag ) {
@@ -845,27 +844,23 @@ parens( struct node *ptree, int *descl, int *descr,  int noden)
 	if( descl[noden] == -1 )
 	{
 		sprintf(result,"%d:%5.3lf", noden+1, (ptree+ ((ptree+noden)->abv))->time );
-		//fprintf(stdout, "%d:%5.3lf", noden+1, (ptree+ ((ptree+noden)->abv))->time );
 	}
 	else
 	{
 		sprintf(result, "(");
-		//fprintf(stdout, "(");
 		result = append(result, parens( ptree, descl,descr, descl[noden] ));
 		result = append(result, ",");
-		//fprintf(stdout, ",");
 		result = append(result, parens(ptree, descl, descr, descr[noden] )) ;
 		if( (ptree+noden)->abv == 0 )
 		{
 			result = append(result, ");\n");
-			//fprintf(stdout, ");\n");
 		}
-		else {
+		else
+        {
 			time = (ptree + (ptree+noden)->abv )->time - (ptree+noden)->time ;
 			char* tempString = malloc(9);
 			sprintf(tempString, "):%5.3lf", time );
 			result = append(result, tempString);
-			//fprintf(stdout, "):%5.3lf", time );
 		}
 	}
 	return result;
