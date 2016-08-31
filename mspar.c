@@ -312,25 +312,20 @@ char *doPrintWorkerResultHeader(int segsites, double probss, struct params pars,
     if( (segsites > 0 ) || ( pars.mp.theta > 0.0 ) )
     {
         length += 21; // "segsites: " + estimation of segsites digits + CR/LF
-        if (pars.mp.treeflag)
-        {
-            length += strlen(treeOutput);
-        }
+        if (!pars.mp.treeflag)
+            asprintf(&treeOutput, "\n");
+
+        length += strlen(treeOutput);
 
         if( (pars.mp.segsitesin > 0 ) && ( pars.mp.theta > 0.0 ))
-        {
             length += 17; // "prob: " + estimation of probss digits + CR/LF
-        }
     }
     results = malloc(sizeof(char)*length);
 
     sprintf(results, "\n//");
 
     if( (segsites > 0 ) || ( pars.mp.theta > 0.0 ) ) {
-        if( pars.mp.treeflag )
-            sprintf(results, "%s%s", results, treeOutput);
-        else
-            sprintf(results, "%s%s", results, "\n");
+        sprintf(results, "%s%s", results, treeOutput);
 
         if( (pars.mp.segsitesin > 0 ) && ( pars.mp.theta > 0.0 ))
             sprintf(results, "%sprob: %g\n", results, probss);
