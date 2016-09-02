@@ -27,6 +27,9 @@ void singleNodeProcessing(int howmany, struct params parameters, unsigned int ma
     if (world_rank == 0) // let the "global master" to generate the remainder samples as well
         samples += remainder;
 
+    if (diagnose)
+        fprintf(stderr, "[%d] -> Vamos a generar [%d] samples.\n", world_rank, samples);
+
     char *results = generateSamples(samples, parameters, maxsites, bytes);
     printSamples(results, *bytes);
 }
@@ -221,17 +224,18 @@ char *generateSamples(int samples, struct params parameters, unsigned maxsites, 
     int length;
 
     results = generateSample(parameters, maxsites, &length);
+
     *bytes = length;
 
     int i;
-    for (i = 1; i < samples; ++i) {
+    for (i = 1; i < samples; ++i) { // starts in 1 because a sample was already generated before the for-loop
         sample = generateSample(parameters, maxsites, &length);
 
-        results = realloc(results, *bytes + length + 1);
+        results = realloc(results, *bytes + length + 2);
 
         memcpy(results + *bytes, sample, length);
 
-        *bytes += length + 1;
+        *bytes += length;
         free(sample);
     }
 
@@ -268,6 +272,7 @@ char* generateSample(struct params parameters, unsigned maxsites, int *bytes)
 
     offset = strlen(results);
     *bytes = offset;
+
 
     if(segsites > 0)
     {
