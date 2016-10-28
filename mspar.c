@@ -7,6 +7,7 @@
 const int RESULTS_TAG = 300;
 
 int diagnose = 0; // Used for diagnosing the application.
+int output_enabled = 1; // Used switch off the output
 
 // Following variables are with global scope in order to facilitate its sharing among routines.
 // They are going to be updated in the masterWorkerSetup routine only, which is called only one, therefore there is no
@@ -36,8 +37,9 @@ void singleNodeProcessing(int howmany, struct params parameters, unsigned int ma
 
 void printSamples(char *results, int bytes)
 {
-    fprintf(stdout, "%s", results);
-    fflush(stdout);
+    if (output_enabled)
+        fprintf(stdout, "%s", results);
+        fflush(stdout);
 
     if (diagnose)
         fprintf(stderr, "[%d] -> Printed [%d] bytes.\n", world_rank, bytes);
@@ -127,6 +129,8 @@ int setup(int argc, char *argv[], int howmany, struct params parameters)
     unsigned short localSeedMatrix[3];
 
     if (getenv("MSPARSM_DIAGNOSE")) diagnose = 1;
+
+    if (getenv("MSPARSM_OUTPUT_DISABLE")) output_enabled = 0;
 
     // MPI Initialization
     MPI_Init(&argc, &argv );
