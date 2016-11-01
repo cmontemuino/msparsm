@@ -68,7 +68,15 @@ void secondaryNodeProcessing(int remaining, struct params parameters, unsigned i
     }
 
     // Send gathered results to master in master-node
-    sendResultsToMaster(results, bytes, MPI_COMM_WORLD);
+        if (output_enabled) {
+                sendResultsToMaster(results, bytes, MPI_COMM_WORLD);
+        } else {
+                free(results);
+                char *someText = malloc(sizeof(char));
+                sprintf(someText, "1");
+                int largo = strlen(someText);
+                sendResultsToMaster(someText, largo, MPI_COMM_WORLD);
+        }
 }
 
 void sendResultsToMaster(char *results, int bytes, MPI_Comm comm)
@@ -187,10 +195,19 @@ void masterWorker(int argc, char *argv[], int howmany, struct params parameters,
                 int bytes = 0;
                 char *results = generateSamples(workerSamples, parameters, maxsites, &bytes);
 
-                if (world_rank == shm_rank)
-                    printSamples(results, bytes);
-                else  // Send results to shm_rank = 0
-                    sendResultsToMaster(results, bytes, shmcomm);
+                if (world_rank == shm_rank) {
+                        printSamples(results, bytes);
+                } else {  // Send results to shm_rank = 0
+                        if (output_enabled) {
+                                sendResultsToMaster(results, bytes, shmcomm);
+                        } else {
+                                free(results);
+                                char *someText = malloc(sizeof(char));
+                                sprintf(someText, "1");
+                                int largo = strlen(someText);
+                                sendResultsToMaster(someText, largo, shmcomm);
+                        }
+                }
             } else {
                 if (world_rank != 0 && shm_rank == 0) {
                     secondaryNodeProcessing(remainingLocal, parameters, maxsites);
