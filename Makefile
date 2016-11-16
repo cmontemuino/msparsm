@@ -7,7 +7,7 @@
 CC=mpicc
 
 # Compilation flags
-CFLAGS?=-O3 -std=gnu99 -I.
+CFLAGS?=-O2 -std=gnu99 -I.
 
 # define any libraries to link into executable:
 LIBS?=-lm
