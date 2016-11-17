@@ -200,7 +200,7 @@ void masterWorker(int argc, char *argv[], int howmany, struct params parameters,
                 int bytes = 0;
                 char *results = generateSamples(workerSamples, parameters, maxsites, &bytes);
 
-                if (world_rank == shm_rank)
+//                if (world_rank == shm_rank)
 //                {
                     printSamples(results, bytes);
                     free(results); // be good citizen
