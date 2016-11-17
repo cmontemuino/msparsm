@@ -1,5 +1,9 @@
 #include <mpi.h>
 
+// LOCAL_FILE_NAME_SIZE: max size for local output file name, assuming the following format: out_xxxxxx.txt
+// where 'xxxxxx' is to host the worker number (i.e.: max 1000000 workers).
+#define LOCAL_FILE_NAME_SIZE 15
+
 void masterWorker(int argc, char *argv[], int howmany, struct params parameters, int unsigned maxsites);
 void teardown();
 int setup(int argc, char *argv[], int howmany, struct params parameters);

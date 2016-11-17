@@ -15,6 +15,8 @@ MPI_Comm shmcomm; // shm intra-communicator
 int world_rank, shm_rank;
 int world_size, shm_size;
 
+FILE * local_output; // workers will send samples to this file
+
 // **************************************  //
 // MASTER
 // **************************************  //
@@ -32,27 +34,33 @@ void singleNodeProcessing(int howmany, struct params parameters, unsigned int ma
 
     char *results = generateSamples(samples, parameters, maxsites, bytes);
     printSamples(results, *bytes);
+    free(results); // be good citizen
 }
 
 void printSamples(char *results, int bytes)
 {
+    /*
     fprintf(stdout, "%s", results);
     fflush(stdout);
+    */
+
+    fprintf(local_output, "%s", results);
 
     if (diagnose)
         fprintf(stderr, "[%d] -> Printed [%d] bytes.\n", world_rank, bytes);
-
-    free(results); // be good citizen
 }
 
 void secondaryNodeProcessing(int remaining, struct params parameters, unsigned int maxsites)
 {
     int bytes = 0;
     char *results = malloc(sizeof(char) * 1000);
-    if (remaining > 0)
+    if (remaining > 0) {
         results = generateSamples(remaining, parameters, maxsites, &bytes);
+        free(results); // be good citizen
+    }
 
     // Receive samples from workers in same node.
+    /*
     int i;
     char *shm_results;
     for (i = 1; i < shm_size; i++){
@@ -67,6 +75,7 @@ void secondaryNodeProcessing(int remaining, struct params parameters, unsigned i
 
     // Send gathered results to master in master-node
     sendResultsToMaster(results, bytes, MPI_COMM_WORLD);
+    */
 }
 
 void sendResultsToMaster(char *results, int bytes, MPI_Comm comm)
@@ -90,8 +99,10 @@ void principalMasterProcessing(int remaining, int nodes, struct params parameter
     if (remaining > 0) {
         char *results = generateSamples(remaining, parameters, maxsites, &bytes);
         printSamples(results, bytes);
+        free(results); // be good citizen
     }
 
+    /*
     // Receive samples from other node masters, each one sending a consolidated message
     int source, i;
     char *shm_results;
@@ -99,6 +110,7 @@ void principalMasterProcessing(int remaining, int nodes, struct params parameter
         shm_results = readResults(MPI_COMM_WORLD, &source, &bytes);
         printSamples(shm_results, bytes);
     }
+    */
 }
 
 int calculateNumberOfNodes()
@@ -147,6 +159,10 @@ int setup(int argc, char *argv[], int howmany, struct params parameters)
 
     initializeSeedMatrix(argc, argv, howmany);
 
+    char file_name[LOCAL_FILE_NAME_SIZE];
+    snprintf(file_name, LOCAL_FILE_NAME_SIZE, "out_%06d.txt", world_rank);
+    local_output = fopen(file_name, "wb");
+
     int nodes = calculateNumberOfNodes();
 
     if (diagnose)
@@ -160,6 +176,7 @@ int setup(int argc, char *argv[], int howmany, struct params parameters)
 
 void teardown() {
     MPI_Finalize();
+    fclose(local_output);
 }
 
 void masterWorker(int argc, char *argv[], int howmany, struct params parameters, unsigned int maxsites)
@@ -184,13 +201,16 @@ void masterWorker(int argc, char *argv[], int howmany, struct params parameters,
                 char *results = generateSamples(workerSamples, parameters, maxsites, &bytes);
 
                 if (world_rank == shm_rank)
+//                {
                     printSamples(results, bytes);
-                else  // Send results to shm_rank = 0
-                    sendResultsToMaster(results, bytes, shmcomm);
+                    free(results); // be good citizen
+//                }
+//                else  // Send results to shm_rank = 0
+//                    sendResultsToMaster(results, bytes, shmcomm);
             } else {
-                if (world_rank != 0 && shm_rank == 0) {
+                if (world_rank != 0 && shm_rank == 0)
                     secondaryNodeProcessing(remainingLocal, parameters, maxsites);
-                } else
+                else
                     principalMasterProcessing(remainingGlobal +  remainingLocal, nodes, parameters, maxsites);
             }
         }
