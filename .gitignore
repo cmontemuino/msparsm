@@ -4,6 +4,7 @@ Project Related
 
 bin/
 _build/
+cmake-build-debug/
 
 ##########################################
 # https://github.com/github/gitignore/blob/master/C.gitignore

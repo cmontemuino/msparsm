@@ -185,35 +185,29 @@ void masterWorker(int argc, char *argv[], int howmany, struct params parameters,
 
     // Filter out workers with rank higher than howmany, meaning there are more workers than samples to be generated.
     if(world_rank < howmany) {
-        if (world_size == shm_size) { // There is only one node
-            int bytes;
-            singleNodeProcessing(howmany, parameters, maxsites, &bytes);
-        } else {
+        //if (world_size == shm_size) { // There is only one node
+        //    int bytes;
+        //    singleNodeProcessing(howmany, parameters, maxsites, &bytes);
+        //} else {
             MPI_Bcast(&nodes, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
             int nodeSamples = howmany / nodes;
             int remainingGlobal = howmany % nodes;
-            int workerSamples = nodeSamples / (shm_size - 1);
-            int remainingLocal = nodeSamples % (shm_size - 1);
+            int localSamples = nodeSamples / shm_size;
+            int remainingLocal = nodeSamples % shm_size;
 
-            if (world_rank != 0 && shm_rank != 0) {
-                int bytes = 0;
-                char *results = generateSamples(workerSamples, parameters, maxsites, &bytes);
-
-//                if (world_rank == shm_rank)
-//                {
-                    printSamples(results, bytes);
-                    free(results); // be good citizen
-//                }
-//                else  // Send results to shm_rank = 0
-//                    sendResultsToMaster(results, bytes, shmcomm);
-            } else {
-                if (world_rank != 0 && shm_rank == 0)
-                    secondaryNodeProcessing(remainingLocal, parameters, maxsites);
+            int toGenerate = localSamples;
+            if (shm_rank == 0)
+                if (world_rank == 0)
+                    toGenerate = localSamples + remainingGlobal +  remainingLocal;
                 else
-                    principalMasterProcessing(remainingGlobal +  remainingLocal, nodes, parameters, maxsites);
-            }
-        }
+                    toGenerate = localSamples + remainingLocal;
+
+            int bytes = 0;
+            char *results = generateSamples(toGenerate, parameters, maxsites, &bytes);
+            printSamples(results, bytes);
+            free(results); // be good citizen
+        //}
     }
 
     teardown();
