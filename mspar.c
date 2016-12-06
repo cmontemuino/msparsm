@@ -182,8 +182,6 @@ void teardown() {
 void masterWorker(int argc, char *argv[], int howmany, struct params parameters, unsigned int maxsites)
 {
         int nodes = setup(argc, argv, howmany, parameters);
-        int workersXnode = world_size / nodes; // how man workers x node?
-        int myNode = workersXnode / nodes; // what's my node number?
 
         // Filter out workers with rank higher than howmany, meaning there are more workers than samples to be generated.
         if(world_rank < howmany) {
@@ -192,6 +190,10 @@ void masterWorker(int argc, char *argv[], int howmany, struct params parameters,
                 //    singleNodeProcessing(howmany, parameters, maxsites, &bytes);
                 //} else {
                 MPI_Bcast(&nodes, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+                int workersXnode = world_size / nodes; // how many workers x node?
+                int myNode = workersXnode / nodes; // what's my node number?
+
 
                 int nodeSamples = howmany / nodes;
                 int remainingGlobal = howmany % nodes; // at most (nodes - 1)
