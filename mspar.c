@@ -181,36 +181,40 @@ void teardown() {
 
 void masterWorker(int argc, char *argv[], int howmany, struct params parameters, unsigned int maxsites)
 {
-    int nodes = setup(argc, argv, howmany, parameters);
+        int nodes = setup(argc, argv, howmany, parameters);
+        int workersXnode = world_size / nodes; // how man workers x node?
+        int myNode = workersXnode / nodes; // what's my node number?
 
-    // Filter out workers with rank higher than howmany, meaning there are more workers than samples to be generated.
-    if(world_rank < howmany) {
-        //if (world_size == shm_size) { // There is only one node
-        //    int bytes;
-        //    singleNodeProcessing(howmany, parameters, maxsites, &bytes);
-        //} else {
-            MPI_Bcast(&nodes, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        // Filter out workers with rank higher than howmany, meaning there are more workers than samples to be generated.
+        if(world_rank < howmany) {
+                //if (world_size == shm_size) { // There is only one node
+                //    int bytes;
+                //    singleNodeProcessing(howmany, parameters, maxsites, &bytes);
+                //} else {
+                MPI_Bcast(&nodes, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-            int nodeSamples = howmany / nodes;
-            int remainingGlobal = howmany % nodes;
-            int localSamples = nodeSamples / shm_size;
-            int remainingLocal = nodeSamples % shm_size;
+                int nodeSamples = howmany / nodes;
+                int remainingGlobal = howmany % nodes; // at most (nodes - 1)
 
-            int toGenerate = localSamples;
-            if (shm_rank == 0)
-                if (world_rank == 0)
-                    toGenerate = localSamples + remainingGlobal +  remainingLocal;
-                else
-                    toGenerate = localSamples + remainingLocal;
+                // Evenly distribute global remaining samples between nodes
+                if (remainingGlobal > 0 && myNode < remainingGlobal)
+                        nodeSamples++;
 
-            int bytes = 0;
-            char *results = generateSamples(toGenerate, parameters, maxsites, &bytes);
-            printSamples(results, bytes);
-            free(results); // be good citizen
-        //}
-    }
+                int localSamples = nodeSamples / shm_size;
+                int remainingLocal = nodeSamples % shm_size; // at most (shm_size - 1)
 
-    teardown();
+                // Evenly distribute local remaining samples between workers
+                if (remainingLocal > 0 && shm_rank < remainingLocal)
+                        localSamples++;
+
+                int bytes = 0;
+                char *results = generateSamples(localSamples, parameters, maxsites, &bytes);
+                printSamples(results, bytes);
+                free(results); // be good citizen
+                //}
+            }
+
+            teardown();
 }
 
 char *readResults(MPI_Comm comm, int *source, int *bytes)
