@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <mpi.h>
 #include "ms.h"
 #define NL putchar('\n')
 #define size_t unsigned
@@ -42,10 +43,10 @@
 
 extern int flag;
 
-int nchrom, begs, nsegs;
+int nchrom, begs;
 long nlinks ;
 static int *nnodes = NULL ;  
-double t, cleft , pc, lnpc ;
+double cleft , pc, lnpc ;
 
 static unsigned seglimit = SEGINC ;
 static unsigned maxchr ;
@@ -78,17 +79,20 @@ segtre_mig(struct c_params *cp, int *pnsegs )
 {
 	int i, j, k, seg, dec, pop, pop2, c1, c2, ind, rchrom, intn  ;
 	int migrant, source_pop, *config, flagint ;
-	double  ran1(), sum, x, tcoal, ttemp, rft, clefta,  tmin, p  ;
+	double  sum, x, tcoal, ttemp, rft, clefta,  tmin, p  ;
 	double prec, cin,  prect, nnm1, nnm0, mig, ran, coal_prob, prob, rdum , arg ;
 	char c, event ;
-	int re(), cinr(), cleftr(), eflag, cpop, ic  ;
+	int eflag, cpop, ic  ;
 	int nsam, npop, nsites, nintn, *inconfig ;
+        int nsegs;
 	double r,  f, rf,  track_len, *nrec, *npast, *tpast, **migm ;
 	double *size, *alphag, *tlast ;
+        double time;
 	struct devent *nextevent ;
-    int ca(int nsam, int nsites, int c1, int c2);
-	void pick2_chrom(int pop,int config[], int *pc1, int *pc2);
 
+	double t1, t2;
+        double acc1 = 0.0;
+	t1 = MPI_Wtime();
 	nsam = cp->nsam;
 	npop = cp->npop;
 	nsites = cp->nsites;
@@ -154,7 +158,7 @@ segtre_mig(struct c_params *cp, int *pnsegs )
 	nchrom=nsam;
 	nlinks = ((long)(nsam))*(nsites-1) ;
 	nsegs=1;
-	t = 0.;
+	time = 0.;
 	r /= (nsites-1);
 	if( f > 0.0 ) 	pc = (track_len -1.0)/track_len ;
 	else pc = 1.0 ;
@@ -203,7 +207,7 @@ segtre_mig(struct c_params *cp, int *pnsegs )
 		    eflag = 1 ;
 		  }
 	        }
-		
+
 	    for(pop=0; pop<npop ; pop++) {     /* coalescent */
 		coal_prob = ((double)config[pop])*(config[pop]-1.) ;
 	        if( coal_prob > 0.0 ) {
@@ -219,7 +223,7 @@ segtre_mig(struct c_params *cp, int *pnsegs )
 			 }
 		    }
 	  	   else {
-		     arg  = 1. - alphag[pop]*size[pop]*exp(-alphag[pop]*(t - tlast[pop] ) )* log(rdum) / coal_prob     ;
+		     arg  = 1. - alphag[pop]*size[pop]*exp(-alphag[pop]*(time - tlast[pop] ) )* log(rdum) / coal_prob     ;
 		     if( arg > 0.0 ) {                          /*if arg <= 0,  no coalescent within interval */ 
 		         ttemp = log( arg ) / alphag[pop]  ;
 		         if( (eflag == 0) || (ttemp < tmin ) ){
@@ -238,8 +242,8 @@ segtre_mig(struct c_params *cp, int *pnsegs )
                " infinite time to next event. Negative growth rate in last time interval or non-communicating subpops.\n");
 	      exit( 0);
 	    }
-	if( ( ( eflag == 0) && (nextevent != NULL))|| ( (nextevent != NULL) &&  ( (t+tmin) >=  nextevent->time)) ) {
-	    t = nextevent->time ;
+	if( ( ( eflag == 0) && (nextevent != NULL))|| ( (nextevent != NULL) &&  ( (time+tmin) >=  nextevent->time)) ) {
+	    time = nextevent->time ;
 	    switch(  nextevent->detype ) {
 		case 'N' :
 		   for(pop =0; pop <npop; pop++){
@@ -255,17 +259,17 @@ segtre_mig(struct c_params *cp, int *pnsegs )
 		   break;
 		case 'G' :
 		   for(pop =0; pop <npop; pop++){
-		     size[pop] = size[pop]*exp( -alphag[pop]*(t - tlast[pop]) ) ;
+		     size[pop] = size[pop]*exp( -alphag[pop]*(time - tlast[pop]) ) ;
 		     alphag[pop]= nextevent->paramv ;
-		     tlast[pop] = t ;
+		     tlast[pop] = time ;
 		   }
 		   nextevent = nextevent->nextde ;
 		   break;
 		case 'g' :
 		     pop = nextevent->popi ;
-		     size[pop] = size[pop]*exp( - alphag[pop]*(t-tlast[pop]) ) ;
+		     size[pop] = size[pop]*exp( - alphag[pop]*(time-tlast[pop]) ) ;
 		     alphag[pop]= nextevent->paramv ;
-		     tlast[pop] = t ;
+		     tlast[pop] = time ;
 		     nextevent = nextevent->nextde ;
 		     break;
 		case 'M' :
@@ -311,7 +315,7 @@ segtre_mig(struct c_params *cp, int *pnsegs )
 		  size = (double *)realloc(size, (unsigned)(npop*sizeof(double) ));
 		  alphag = (double *)realloc(alphag, (unsigned)(npop*sizeof(double) ));
 		  tlast = (double *)realloc(tlast,(unsigned)(npop*sizeof(double) ) ) ;
-		  tlast[npop-1] = t ;
+		  tlast[npop-1] = time ;
 		  size[npop-1] = 1.0 ;
 		  alphag[npop-1] = 0.0 ;
 		  migm = (double **)realloc(migm, (unsigned)(npop*sizeof( double *)));
@@ -335,18 +339,18 @@ segtre_mig(struct c_params *cp, int *pnsegs )
 		}
  	   } 
 	else {
-		   t += tmin ;	
-		   if( event == 'r' ) {   
+		   time += tmin ;
+		   if( event == 'r' ) {
 		      if( (ran = ran1()) < ( prec / prect ) ){ /*recombination*/
-		     	  rchrom = re(nsam);
+		     	  rchrom = re(nsam, &nsegs);
 			  config[ chrom[rchrom].pop ] += 1 ;
 		      }
 		      else if( ran < (prec + clefta)/(prect) ){    /*  cleft event */
-			 rchrom = cleftr(nsam);
+			 rchrom = cleftr(nsam, &nsegs);
 			 config[ chrom[rchrom].pop ] += 1 ;
 		      }
 		      else  {         /* cin event */
-			 rchrom = cinr(nsam,nsites);
+			 rchrom = cinr(nsam, nsites, time, &nsegs);
 			 if( rchrom >= 0 ) config[ chrom[rchrom].pop ] += 1 ;
 		      }
 		   }
@@ -372,14 +376,20 @@ segtre_mig(struct c_params *cp, int *pnsegs )
 			  chrom[migrant].pop = source_pop ;
 	           }
 		   else { 								 /* coalescent event */
+
 			/* pick the two, c1, c2  */
 			pick2_chrom( cpop, config, &c1,&c2);  /* c1 and c2 are chrom's to coalesce */
-			dec = ca(nsam,nsites,c1,c2 );
+
+			dec = ca(nsam,nsites,c1,c2, time, nsegs, &t2);
+                           acc1 += t2;
 			config[cpop] -= dec ;
+
 		   }
 		 }
 	     }  
 	*pnsegs = nsegs ;
+        fprintf(stderr, "Segtremig time: %f\n", MPI_Wtime() - t1);
+        fprintf(stderr, "CA time: %f\n", acc1);
 	free(config); 
 	free( size ) ;
 	free( alphag );
@@ -396,13 +406,11 @@ segtre_mig(struct c_params *cp, int *pnsegs )
 
 
 	int
-re(nsam)
-	int nsam;
+re(int nsam, int *nsegs)
 {
 	struct seg *pseg ;
 	int  el, lsg, lsgm1,  ic,  is, in;
     long spot;
-	double ran1();
 
 
 /* First generate a random x-over spot, then locate it as to chrom and seg. */
@@ -420,16 +428,16 @@ re(nsam)
 		spot -= el ;
 		}
 	is = pseg->beg + spot -1;
-	xover(nsam, ic, is);
+	xover(nsam, ic, is, nsegs);
 	return(ic);	
 }
 
 	int
-cleftr( int nsam)
+cleftr( int nsam, int *nsegs)
 {
 	struct seg *pseg ;
 	int   lsg, lsgm1,  ic,  is, in, spot;
-	double ran1(), x, sum, len  ;
+	double x, sum, len  ;
 
     while( (x = cleft*ran1() )== 0.0 )
        ;
@@ -441,17 +449,15 @@ cleftr( int nsam)
 	pseg = chrom[ic].pseg;
 	len = links(ic) ;
 	is = pseg->beg + floor( 1.0 + log( 1.0 - (1.0- pow( pc, len))*ran1() )/lnpc  ) -1  ;
-	xover( nsam, ic, is);
+	xover( nsam, ic, is, nsegs);
 	return( ic) ;
 }
 
 	int
-cinr( int nsam, int nsites)
+cinr( int nsam, int nsites, double time, int *nsegs)
 {
 	struct seg *pseg ;
 	int len,  el, lsg, lsgm1,  ic,  is, in, spot, endic ;
-	double ran1();
-	int  ca() ;
 
 
 /* First generate a random x-over spot, then locate it as to chrom and seg. */
@@ -470,26 +476,26 @@ cinr( int nsam, int nsites)
 		}
 	is = pseg->beg + spot -1;
 	endic = (pseg+lsgm1)->end ;
-	xover(nsam, ic, is);
+	xover(nsam, ic, is, nsegs);
 
 	len = floor( 1.0 + log( ran1() )/lnpc ) ;
 	if( is+len >= endic ) return(ic) ;  
 	if( is+len < (chrom[nchrom-1].pseg)->beg ){
-	   ca( nsam, nsites, ic, nchrom-1);
+	   ca( nsam, nsites, ic, nchrom-1, time, *nsegs, NULL);
 	    return(-1) ;
 	    }
-	xover( nsam, nchrom-1, is+len ) ;
-	ca( nsam,nsites, ic,  nchrom-1);
+	xover( nsam, nchrom-1, is+len, nsegs ) ;
+	ca( nsam,nsites, ic,  nchrom-1, time, *nsegs, NULL);
 	return(ic);	
 
 }
 
 	int
-xover(int nsam,int ic, int is)
+xover(int nsam,int ic, int is, int *nsegs)
 {
 	struct seg *pseg, *pseg2;
 	int i,  lsg, lsgm1, newsg,  jseg, k,  in, spot;
-	double ran1(), len ;
+	double len ;
 
 
 	pseg = chrom[ic].pseg ;
@@ -540,12 +546,12 @@ if( !(chrom[ic].pseg =
 		perror( " realloc error. re2");
 	if( in ) {
 		begs = pseg2->beg;
-		for( i=0,k=0; (k<nsegs-1)&&(begs > seglst[seglst[i].next].beg-1);
+		for( i=0,k=0; (k<*nsegs-1)&&(begs > seglst[seglst[i].next].beg-1);
 		   i=seglst[i].next, k++) ;
 		if( begs != seglst[i].beg ) {
 						/* new tree  */
 
-	   	   if( nsegs >= seglimit ) {  
+	   	   if(*nsegs >= seglimit ) {
 	   	   	  seglimit += SEGINC ;
 	   	      nnodes = (int *)realloc( nnodes,(unsigned)(sizeof(int)*seglimit)) ; 
 	   	      if( nnodes == NULL) perror("realloc error. 1. segtre_mig.c");
@@ -554,15 +560,15 @@ if( !(chrom[ic].pseg =
 	   	      if(seglst == NULL ) perror("realloc error. 2. segtre_mig.c");
 	   	      /*  printf("seglimit: %d\n",seglimit);  */
 	   	      } 
-	   	   seglst[nsegs].next = seglst[i].next;
-	   	   seglst[i].next = nsegs;
-	   	   seglst[nsegs].beg = begs ;
-		   if( !(seglst[nsegs].ptree = (struct node *)calloc((unsigned)(2*nsam), sizeof(struct
+	   	   seglst[*nsegs].next = seglst[i].next;
+	   	   seglst[i].next = *nsegs;
+	   	   seglst[*nsegs].beg = begs ;
+		   if( !(seglst[*nsegs].ptree = (struct node *)calloc((unsigned)(2*nsam), sizeof(struct
 			 node)) )) perror("calloc error. re3.");
-		   nnodes[nsegs] = nnodes[i];
+		   nnodes[*nsegs] = nnodes[i];
 		   ptree1 = seglst[i].ptree;
-		   ptree2 = seglst[nsegs].ptree;
-		   nsegs++ ;
+		   ptree2 = seglst[*nsegs].ptree;
+		   *nsegs = *nsegs + 1 ;
 		   for( k=0; k<=nnodes[i]; k++) {
 		      (ptree2+k)->abv = (ptree1+k)->abv ;
 		      (ptree2+k)->time = (ptree1+k)->time;
@@ -576,13 +582,14 @@ if( !(chrom[ic].pseg =
    Pick two chromosomes and merge them. Update trees if necessary. **/
 
 	int
-ca(int nsam, int nsites, int c1, int c2)
+ca(int nsam, int nsites, int c1, int c2, double time, int nsegs, double *wallclock)
 {
 	int yes1, yes2, seg1, seg2, seg ;
 	int tseg, start, end, desc, k;
 	struct seg *pseg;
 	struct node *ptree;
-    int isseg(int start, int c, int *psg);
+
+        double t0;
 
 	seg1=0;
 	seg2=0;
@@ -592,10 +599,13 @@ ca(int nsam, int nsites, int c1, int c2)
 
 	tseg = -1 ;
 
+        t0 = MPI_Wtime();
 	for( seg=0, k=0; k<nsegs; seg=seglst[seg].next, k++) {
+
 		start = seglst[seg].beg;
 		yes1 = isseg(start, c1, &seg1);
 		yes2 = isseg(start, c2, &seg2);
+
 		if( yes1 || yes2 ) {
 			tseg++;
 			(pseg+tseg)->beg=seglst[seg].beg;
@@ -612,7 +622,7 @@ ca(int nsam, int nsites, int c1, int c2)
 				(ptree+desc)->abv = nnodes[seg];
 				desc = (chrom[c2].pseg + seg2) -> desc;
 				(ptree+desc)->abv = nnodes[seg];
-				(ptree+nnodes[seg])->time = t;
+				(ptree+nnodes[seg])->time = time;
 
 				}
 			else {
@@ -621,7 +631,9 @@ ca(int nsam, int nsites, int c1, int c2)
 				  (chrom[c2].pseg + seg2)->desc);
 				}
 			}
+
 		}
+        *wallclock = MPI_Wtime() - t0;
 	nlinks -= links(c1);
 	cleft -= 1.0 - pow(pc, (double)links(c1));
 	free(chrom[c1].pseg) ;

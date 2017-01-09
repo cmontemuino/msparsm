@@ -107,10 +107,11 @@
 
 #define SITESINC 10
 
+// Represents the history for a given segment of a gamete
 struct segl {
-	int beg;
-	struct node *ptree;
-	int next;
+	int beg;                // starting point of segment
+	struct node *ptree;     // points to the first node of the tree representing the history of the segment
+	int next;               // index number of the next segment
 };
 
 double ran1();
@@ -124,6 +125,8 @@ int main(int argc, char *argv[]){
 	struct params pars ;
 	struct params getpars( int argc, char *argv[], int *howmany, int ntbs, int count )  ;
 
+        double t1, t2;
+        t1 = MPI_Wtime();
 	int samples;
 	char *workerOutput, *results, *singleResult;
 
@@ -139,6 +142,9 @@ int main(int argc, char *argv[]){
 
 	// Master-Worker
 	masterWorker(argc, argv, howmany, pars, SITESINC);
+        t2 = MPI_Wtime();
+        fprintf(stderr, "TOTAL time: %f\n", t2 - t1);
+        fprintf(stderr, "--------\n");
 }
 
 struct gensam_result
@@ -174,6 +180,8 @@ gensam( char **list, double *pprobss, double *ptmrca, double *pttot, struct para
 	nsites = pars.cp.nsites ;
 	nsinv = 1./nsites;
 
+	// nsegs: the number of segments the gametes were broken into in tracing back the history of the gametes
+        // seglst: the histories of segments
 	seglst = segtre_mig(&(pars.cp),  &nsegs ) ;
 	nsam = pars.cp.nsam;
 	segsitesin = pars.mp.segsitesin ;
@@ -553,7 +561,7 @@ getpars(int argc, char *argv[], int *phowmany, int ntbs, int count )
 				arg++;
 				argcheck( arg, argc, argv);
 				pop = atoi( argv[arg++] ) -1;
-				if( arg >= argc ) { fprintf(stderr,"Not enough arg's after -G.\n"); usage(); }
+				if( arg >= argc ) { fprintf(stderr,"Not enough arg's after -g.\n"); usage(); }
 				palpha = atof( argv[arg++] );
 				pars.cp.alphag[pop] = palpha ;
 				break;

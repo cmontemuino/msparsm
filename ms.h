@@ -1,24 +1,24 @@
 struct devent {
-	double time;
-	int popi;
-	int popj;
-	double paramv;
-	double **mat ;
-	char detype ;
+	double time;                    // time in the past for the demographic event change
+	int popi;                       // subpopulation i (only when 'detype' in [n,g,s,m,j])
+	int popj;                       // subpopulation j (only when 'detype' in [a,j])
+	double paramv;                  // growth rate value
+	double **mat ;                  // values for all elements of the migration matrix (only when 'detype' is 'a')
+	char detype ;                   // past demographic event type (N,G,M,n,g,s,m,a,j)
 	struct devent *nextde;
 } ;
 
 struct c_params {
-	int npop;
-	int nsam;
-	int *config;
-	double **mig_mat;
-	double r;
-	int nsites;
-	double f;
-	double track_len;
-	double *size;
-	double *alphag;
+	int npop;                       // number of subpopulations (island models)
+	int nsam;                       // sample size
+	int *config;                    // number of chromosomes sampled from each subpopulation
+	double **mig_mat;               // migration matrix for subpopulations
+	double r;                       // scaled recombination rate
+	int nsites;                     // number of base pairs in the locus
+	double f;                       // denote ratio g/r (g = gene conversion probability)
+	double track_len;               // mean conversion track length (related to 'f')
+	double *size;                   // size of subpopulations relative to 'No' (default to 1.0)
+	double *alphag;                 // growth rate of subpopulations
 	struct devent *deventlist ;
 } ;
 struct m_params {
@@ -35,10 +35,11 @@ struct params {
 	int output_precision;
 };
 
+// Represents a node in the history tree of a gamete
 struct node{
-	int abv;
+	int abv;        // number of node ancestral to this node
 	int ndes;
-	float time;
+	float time;     // time (in units of 4N generations) of the node
 };
 
 // Result structure returned by the gensam function
@@ -62,5 +63,12 @@ void mnmial(int n, int nclass, double p[], int rv[]);
 void usage();
 int tdesn(struct node *ptree, int tip, int node );
 int pick2(int n, int *i, int *j);
-int xover(int nsam,int ic, int is);
+void pick2_chrom(int pop,int config[], int *pc1, int *pc2);
+int re(int nsam, int *nsegs);
+int xover(int nsam,int ic, int is, int *nsegs);
+int ca(int nsam, int nsites, int c1, int c2, double time, int nsegs, double *wallclock);
+int cinr( int nsam, int nsites, double time, int *nsegs);
+int cleftr( int nsam, int *nsegs);
 int links(int c);
+int isseg(int start, int c, int *psg);
+double ran1();
