@@ -107,15 +107,6 @@
 
 #define SITESINC 10
 
-// Represents the history for a given segment of a gamete
-struct segl {
-	int beg;                // starting point of segment
-	struct node *ptree;     // points to the first node of the tree representing the history of the segment
-	int next;               // index number of the next segment
-};
-
-double ran1();
-
 int main(int argc, char *argv[]){
 	int ntbs;
 	int count;

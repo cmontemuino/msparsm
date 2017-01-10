@@ -39,7 +39,7 @@
 
 #define ERROR(message) fprintf(stderr,message),NL,exit(1)
 
-#define SEGINC 80 
+#define SEGINC 80
 
 extern int flag;
 
@@ -67,14 +67,9 @@ static struct chromo *chrom = NULL ;
 
 struct node *ptree1, *ptree2;
 
-struct segl {
-	int beg;
-	struct node *ptree;
-	int next;
-	}  ;
 static struct segl *seglst = NULL ;
 
-	struct segl *
+struct segl *
 segtre_mig(struct c_params *cp, int *pnsegs ) 
 {
 	int i, j, k, seg, dec, pop, pop2, c1, c2, ind, rchrom, intn  ;
@@ -102,34 +97,37 @@ segtre_mig(struct c_params *cp, int *pnsegs )
 	track_len = cp->track_len ;
 	migm = (double **)malloc( (unsigned)npop*sizeof(double *) ) ;
 	for( i=0; i<npop; i++) {
-	  migm[i] = (double *)malloc( (unsigned)npop*sizeof( double) ) ;
-	  for( j=0; j<npop; j++) migm[i][j] = (cp->mig_mat)[i][j] ;
-	  }
+                migm[i] = (double *)malloc( (unsigned)npop*sizeof( double) ) ;
+                for( j=0; j<npop; j++) migm[i][j] = (cp->mig_mat)[i][j] ;
+        }
 	nextevent = cp->deventlist ;
 	
 /* Initialization */
 	if( chrom == NULL ) {
-	   maxchr = nsam + 20 ;
-	   chrom = (struct chromo *)malloc( (unsigned)( maxchr*sizeof( struct chromo) )) ;
-	  if( chrom == NULL ) perror( "malloc error. segtre");
-	  }
-	if( nnodes == NULL ){
-		nnodes = (int*) malloc((unsigned)(seglimit*sizeof(int)))  ;
-		if( nnodes == NULL ) perror("malloc error. segtre_mig");
-		}
-	if( seglst == NULL ) {
-		seglst = (struct segl *)malloc((unsigned)(seglimit*sizeof(struct segl)) ) ;
-		if( seglst == NULL ) perror("malloc error. segtre_mig.c 2");
-		}
+                maxchr = nsam + 20 ;
+                if( !(chrom = (struct chromo *)malloc( (unsigned)( maxchr*sizeof( struct chromo) )) ))
+	                ERROR( "malloc error when allocating chrom segtre_mig.");
+        }
 
-	config = (int *)malloc( (unsigned) ((npop+1)*sizeof(int) )) ;
-	if( config == NULL ) perror("malloc error. segtre.");
-	size = (double *)malloc( (unsigned) ((npop)*sizeof(double) )) ;
-	if( size == NULL ) perror("malloc error. segtre.");
-	alphag = (double *)malloc( (unsigned) ((npop)*sizeof(double) )) ;
-	if( alphag == NULL ) perror("malloc error. segtre.");
-	tlast = (double *)malloc( (unsigned) ((npop)*sizeof(double) )) ;
-	if( alphag == NULL ) perror("malloc error. segtre.");
+	if( nnodes == NULL )
+		if ( !(nnodes = (int*) malloc((unsigned)(seglimit*sizeof(int))) ))
+                        ERROR("malloc error when allocating nnodes. segtre_mig.");
+	if( seglst == NULL )
+		if ( !(seglst = (struct segl *) malloc( (unsigned)( seglimit * sizeof( struct segl ))) ))
+		        ERROR("malloc error when allocating seglst. segtre_mig.");
+
+	if ( !(config = (int *)malloc( (unsigned) ((npop+1)*sizeof(int) )) ))
+	        ERROR("malloc error when allocating config. segtre_mig");
+
+        if ( !(size = (double *)malloc( (unsigned) ((npop)*sizeof(double) )) ))
+	        ERROR("malloc error when allocating size. segtre_mig.");
+
+        if ( !(alphag = (double *)malloc( (unsigned) ((npop)*sizeof(double) )) ))
+	        ERROR("malloc error when allocating alphag. segtre_mig.");
+
+        if ( !(tlast = (double *)malloc( (unsigned) ((npop)*sizeof(double) )) ))
+	        ERROR("malloc errorwhen allocating tlast. segtre_mig.");
+
 	for(pop=0;pop<npop;pop++) {
 	   config[pop] = inconfig[pop] ;
 	   size[pop] = (cp->size)[pop] ;
@@ -141,7 +139,7 @@ segtre_mig(struct c_params *cp, int *pnsegs )
 			
 			chrom[ind].nseg = 1;
 			if( !(chrom[ind].pseg = (struct seg*)malloc((unsigned)sizeof(struct seg)) ))
-			  ERROR("calloc error. se1");
+                                ERROR("malloc error when allocating chrom[ind[.pseg. segtre_mig.");
 
 			(chrom[ind].pseg)->beg = 0;
 			(chrom[ind].pseg)->end = nsites-1;
@@ -150,9 +148,7 @@ segtre_mig(struct c_params *cp, int *pnsegs )
 			}
 	seglst[0].beg = 0;
 	if( !(seglst[0].ptree = (struct node *)calloc((unsigned)(2*nsam),sizeof(struct node)) ))
-		 perror("calloc error. se2");
-
-
+                ERROR("calloc error when allocating seglst[0].ptree. segtre_mig.");
 
 	nnodes[0] = nsam - 1 ;
 	nchrom=nsam;
@@ -490,7 +486,7 @@ cinr( int nsam, int nsites, double time, int *nsegs)
 
 }
 
-	int
+int
 xover(int nsam,int ic, int is, int *nsegs)
 {
 	struct seg *pseg, *pseg2;
@@ -513,26 +509,26 @@ xover(int nsam,int ic, int is, int *nsegs)
 
 	nchrom++;
 	if( nchrom >= maxchr ) {
-	    maxchr += 20 ;
-	    chrom = (struct chromo *)realloc( chrom, (unsigned)(maxchr*sizeof(struct chromo))) ;
-	    if( chrom == NULL ) perror( "malloc error. segtre2");
-	    }
+                maxchr += 20 ;
+                if ( !(chrom = (struct chromo *)realloc( chrom, (unsigned)(maxchr*sizeof(struct chromo))) ))
+                        ERROR("realloc error when allocating chrom. xover");
+        }
 	if( !( pseg2 = chrom[nchrom-1].pseg = (struct seg *)calloc((unsigned)newsg,sizeof(struct seg)) ) )
-		ERROR(" alloc error. re1");
+		ERROR("calloc error when allocating pseg2. xover");
 	chrom[nchrom-1].nseg = newsg;
 	chrom[nchrom-1].pop = chrom[ic].pop ;
 	pseg2->end = (pseg+jseg)->end ;
 	if( in ) {
 		pseg2->beg = is + 1 ;
 		(pseg+jseg)->end = is;
-		}
+        }
 	else pseg2->beg = (pseg+jseg)->beg ;
 	pseg2->desc = (pseg+jseg)->desc ;
 	for( k=1; k < newsg; k++ ) {
 		(pseg2+k)->beg = (pseg+jseg+k)->beg;
 		(pseg2+k)->end = (pseg+jseg+k)->end;
 		(pseg2+k)->desc = (pseg+jseg+k)->desc;
-		}
+        }
 
 	lsg = chrom[ic].nseg = lsg-newsg + in ;
 	lsgm1 = lsg - 1 ;
@@ -541,38 +537,37 @@ xover(int nsam,int ic, int is, int *nsegs)
 	cleft += 1.0 - pow( pc, len) ;
 	len = (pseg2 + newsg-1)->end - pseg2->beg ;
 	cleft += 1.0 - pow(pc, len) ;
-if( !(chrom[ic].pseg = 
-     (struct seg *)realloc(chrom[ic].pseg,(unsigned)(lsg*sizeof(struct seg)) )) )
-		perror( " realloc error. re2");
+        if( !(chrom[ic].pseg =  (struct seg *)realloc(chrom[ic].pseg,(unsigned)(lsg*sizeof(struct seg)) )) )
+                ERROR( "realloc error when allocating chrom. xover.");
 	if( in ) {
 		begs = pseg2->beg;
 		for( i=0,k=0; (k<*nsegs-1)&&(begs > seglst[seglst[i].next].beg-1);
 		   i=seglst[i].next, k++) ;
-		if( begs != seglst[i].beg ) {
-						/* new tree  */
+		if( begs != seglst[i].beg ) {/* new tree  */
+                        if(*nsegs >= seglimit ) {
+                                // TODO: instead of realloc by small quantities, perhaps we should do it in bigger chunks. Either here, or increasing the SEGINC number
+                                seglimit += SEGINC ;
+                                if( !(nnodes = (int *)realloc(nnodes,(unsigned)(sizeof(int)*seglimit)) ))
+                                        ERROR("realloc error when allocating nnodes. xover.");
 
-	   	   if(*nsegs >= seglimit ) {
-	   	   	  seglimit += SEGINC ;
-	   	      nnodes = (int *)realloc( nnodes,(unsigned)(sizeof(int)*seglimit)) ; 
-	   	      if( nnodes == NULL) perror("realloc error. 1. segtre_mig.c");
-	   	      seglst =
-	   	      	 (struct segl *)realloc( seglst,(unsigned)(sizeof(struct segl)*seglimit));
-	   	      if(seglst == NULL ) perror("realloc error. 2. segtre_mig.c");
-	   	      /*  printf("seglimit: %d\n",seglimit);  */
-	   	      } 
-	   	   seglst[*nsegs].next = seglst[i].next;
-	   	   seglst[i].next = *nsegs;
-	   	   seglst[*nsegs].beg = begs ;
-		   if( !(seglst[*nsegs].ptree = (struct node *)calloc((unsigned)(2*nsam), sizeof(struct
-			 node)) )) perror("calloc error. re3.");
-		   nnodes[*nsegs] = nnodes[i];
-		   ptree1 = seglst[i].ptree;
-		   ptree2 = seglst[*nsegs].ptree;
-		   *nsegs = *nsegs + 1 ;
-		   for( k=0; k<=nnodes[i]; k++) {
-		      (ptree2+k)->abv = (ptree1+k)->abv ;
-		      (ptree2+k)->time = (ptree1+k)->time;
-		      }
+                                if( !(seglst = (struct segl *) realloc(seglst, (unsigned) (seglimit * sizeof( struct segl ) ))))
+                                        ERROR("realloc error when allocating seglst. xover.");
+	   	                /*  printf("seglimit: %d\n",seglimit);  */
+                        }
+                        seglst[*nsegs].next = seglst[i].next;
+                        seglst[i].next = *nsegs;
+                        seglst[*nsegs].beg = begs ;
+
+		        if( !(seglst[*nsegs].ptree = (struct node *) calloc((unsigned)(2*nsam), sizeof(struct node)) ))
+                                ERROR("calloc error when allocating seglst[*nsegs].ptree. xover.");
+                        nnodes[*nsegs] = nnodes[i];
+                        ptree1 = seglst[i].ptree;
+                        ptree2 = seglst[*nsegs].ptree;
+                        *nsegs = *nsegs + 1 ;
+                        for( k=0; k<=nnodes[i]; k++) {
+                                (ptree2+k)->abv = (ptree1+k)->abv ;
+                                (ptree2+k)->time = (ptree1+k)->time;
+                        }
 		   }
 	}
 	return(ic) ;
@@ -594,8 +589,8 @@ ca(int nsam, int nsites, int c1, int c2, double time, int nsegs, double *wallclo
 	seg1=0;
 	seg2=0;
 
-	if( !(pseg = (struct seg *)calloc((unsigned)nsegs,sizeof(struct seg) ))) 
-		perror("alloc error.ca1");
+	if( !(pseg = (struct seg *)calloc((unsigned)nsegs,sizeof(struct seg) )))
+                ERROR("calloc error when allocating pseg. ca.");
 
 	tseg = -1 ;
 
@@ -647,7 +642,7 @@ ca(int nsam, int nsites, int c1, int c2, double time, int nsegs, double *wallclo
 		}
 	else {
 		if( !(pseg = (struct seg *)realloc(pseg,(unsigned)((tseg+1)*sizeof(struct seg)))))
-			perror(" realloc error. ca1");
+                        ERROR(" realloc error when allocating pseg. ca.");
 		chrom[c1].pseg = pseg;
 		chrom[c1].nseg = tseg + 1 ;
 		nlinks += links(c1);
