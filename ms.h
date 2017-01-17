@@ -57,6 +57,18 @@ struct segl {
     int next;               // index number of the next segment
 };
 
+struct seg{
+    int beg;
+    int end;
+    int desc;
+};
+
+struct chromo{
+    int nseg;
+    int pop;
+    struct seg  *pseg;
+};
+
 /*KRT -- prototypes added*/
 void ordran(int n, double pbuf[]);
 void ranvec(int n, double pbuf[]);
@@ -69,12 +81,12 @@ void mnmial(int n, int nclass, double p[], int rv[]);
 void usage();
 int tdesn(struct node *ptree, int tip, int node );
 int pick2(int n, int *i, int *j);
-void pick2_chrom(int pop,int config[], int *pc1, int *pc2);
-int re(int nsam, int *nsegs);
-int xover(int nsam,int ic, int is, int *nsegs);
-int ca(int nsam, int nsites, int c1, int c2, double time, int nsegs, double *wallclock);
-int cinr( int nsam, int nsites, double time, int *nsegs);
-int cleftr( int nsam, int *nsegs);
-int links(int c);
-int isseg(int start, int c, int *psg);
+void pick2_chrom(int pop,int config[], int *pc1, int *pc2, struct chromo *chrom);
+int re(int nsam, int *nsegs, struct segl **seglst, struct chromo **chrom, int *maxchr, int *nchrom, int **nnodes, long *nlinks, double *cleft, double pc);
+int xover(int nsam,int ic, int is, int *nsegs, struct segl **seglst, struct chromo **chrom, int *maxchr, int *nchrom, int **nnodes, long *nlinks, double *cleft, double pc);
+int ca(int nsam, int nsites, int c1, int c2, double time, int nsegs, struct segl *seglst, struct chromo *chrom, int *nchrom, int *nnodes, long *nlinks, double *cleft, double pc, double *wallclock);
+int cinr( int nsam, int nsites, double time, int *nsegs, struct segl **seglst, struct chromo **chrom, int *maxchr, int *nchrom, int **nnodes, long *nlinks, double *cleft, double pc, double lnpc);
+int cleftr( int nsam, int *nsegs, struct segl **seglst, struct chromo **chrom, int *maxchr, int *nchrom, int **nnodes, long *nlinks, double *cleft, double pc, double lnpc);
+int links(int c, struct chromo *chrom);
+int isseg(int start, int c, int *psg, struct chromo *chrom);
 double ran1();
