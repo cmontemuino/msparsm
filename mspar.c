@@ -20,97 +20,12 @@ FILE * local_output; // workers will send samples to this file
 // **************************************  //
 // MASTER
 // **************************************  //
-void singleNodeProcessing(int howmany, struct params parameters, unsigned int maxsites, int *bytes)
-{
-    // No master process is needed. Every MPI process can just output the generated samples
-    int samples = howmany / world_size;
-    int remainder = howmany % world_size;
-
-    if (world_rank == 0) // let the "global master" to generate the remainder samples as well
-        samples += remainder;
-
-    if (diagnose)
-        fprintf(stderr, "[%d] -> Vamos a generar [%d] samples.\n", world_rank, samples);
-
-    char *results = generateSamples(samples, parameters, maxsites, bytes);
-    printSamples(results, *bytes);
-    free(results); // be good citizen
-}
-
 void printSamples(char *results, int bytes)
 {
-    /*
-    fprintf(stdout, "%s", results);
-    fflush(stdout);
-    */
-
     fprintf(local_output, "%s", results);
 
     if (diagnose)
         fprintf(stderr, "[%d] -> Printed [%d] bytes.\n", world_rank, bytes);
-}
-
-void secondaryNodeProcessing(int remaining, struct params parameters, unsigned int maxsites)
-{
-    int bytes = 0;
-    char *results = malloc(sizeof(char) * 1000);
-    if (remaining > 0) {
-        results = generateSamples(remaining, parameters, maxsites, &bytes);
-        free(results); // be good citizen
-    }
-
-    // Receive samples from workers in same node.
-    /*
-    int i;
-    char *shm_results;
-    for (i = 1; i < shm_size; i++){
-        int source, length;
-
-        shm_results = readResults(shmcomm, &source, &length);
-        results = realloc(results, bytes + length + 1);
-        memcpy(results + bytes, shm_results, length);
-        bytes += length + 1;
-        free(shm_results);
-    }
-
-    // Send gathered results to master in master-node
-    sendResultsToMaster(results, bytes, MPI_COMM_WORLD);
-    */
-}
-
-void sendResultsToMaster(char *results, int bytes, MPI_Comm comm)
-{
-    MPI_Send(results, bytes + 1, MPI_CHAR, 0, RESULTS_TAG, comm);
-
-    if (diagnose) {
-        char *communicator = "MPI_COMM_WORLD";
-        if (comm != MPI_COMM_WORLD)
-            communicator = "SHM_COMM";
-
-        fprintf(stderr, "[%d] -> Sent [%d] bytes to master in %s.\n", world_rank, bytes + 1, communicator);
-    }
-
-    free(results);
-}
-
-void principalMasterProcessing(int remaining, int nodes, struct params parameters, unsigned int maxsites)
-{
-    int bytes = 0;
-    if (remaining > 0) {
-        char *results = generateSamples(remaining, parameters, maxsites, &bytes);
-        printSamples(results, bytes);
-        free(results); // be good citizen
-    }
-
-    /*
-    // Receive samples from other node masters, each one sending a consolidated message
-    int source, i;
-    char *shm_results;
-    for (i = 1; i < nodes; i++){
-        shm_results = readResults(MPI_COMM_WORLD, &source, &bytes);
-        printSamples(shm_results, bytes);
-    }
-    */
 }
 
 int calculateNumberOfNodes()
@@ -185,15 +100,10 @@ void masterWorker(int argc, char *argv[], int howmany, struct params parameters,
 
         // Filter out workers with rank higher than howmany, meaning there are more workers than samples to be generated.
         if(world_rank < howmany) {
-                //if (world_size == shm_size) { // There is only one node
-                //    int bytes;
-                //    singleNodeProcessing(howmany, parameters, maxsites, &bytes);
-                //} else {
                 MPI_Bcast(&nodes, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
                 int workersXnode = world_size / nodes; // how many workers x node?
                 int myNode = workersXnode / nodes; // what's my node number?
-
 
                 int nodeSamples = howmany / nodes;
                 int remainingGlobal = howmany % nodes; // at most (nodes - 1)
@@ -210,59 +120,25 @@ void masterWorker(int argc, char *argv[], int howmany, struct params parameters,
                         localSamples++;
 
                 int bytes = 0;
-                char *results = generateSamples(localSamples, parameters, maxsites, &bytes);
-                printSamples(results, bytes);
-                free(results); // be good citizen
-                //}
+                generateSamples(localSamples, parameters, maxsites, &bytes);
             }
 
             teardown();
 }
-
-char *readResults(MPI_Comm comm, int *source, int *bytes)
+void generateSamples(int samples, struct params parameters, unsigned maxsites, int *bytes)
 {
-    MPI_Status status;
+        int length;
 
-    MPI_Probe(MPI_ANY_SOURCE, RESULTS_TAG, comm, &status);
-    MPI_Get_count(&status, MPI_CHAR, bytes);
-    *source = status.MPI_SOURCE;
+        for (int j = 0; j < samples; j++)
+        {
+                char *results = generateSample(parameters, maxsites, &length);
+                printSamples(results, length);
+                free(results);
+        }
 
-    char *results = (char *) malloc(*bytes * sizeof(char));
 
-    MPI_Recv(results, *bytes, MPI_CHAR, *source, RESULTS_TAG, comm, MPI_STATUS_IGNORE);
-
-    if (diagnose)
-        fprintf(stderr, "[%d] -> Read [%d] bytes from worker %d.\n", world_rank, *bytes, *source);
-
-    return results;
-}
-
-char *generateSamples(int samples, struct params parameters, unsigned maxsites, int *bytes)
-{
-    char *results;
-    char *sample;
-    int length;
-
-    results = generateSample(parameters, maxsites, &length);
-
-    *bytes = length;
-
-    int i;
-    for (i = 1; i < samples; ++i) { // starts in 1 because a sample was already generated before the for-loop
-        sample = generateSample(parameters, maxsites, &length);
-
-        results = realloc(results, *bytes + length + 2);
-
-        memcpy(results + *bytes, sample, length);
-
-        *bytes += length;
-        free(sample);
-    }
-
-    if (diagnose)
-        fprintf(stderr, "[%d] -> Generated [%d] samples.\n", world_rank, samples);
-
-    return results;
+        if (diagnose)
+                fprintf(stderr, "[%d] -> Generated [%d] samples.\n", world_rank, samples);
 }
 
 /*

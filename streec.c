@@ -590,7 +590,8 @@ ca(int nsam, int nsites, int c1, int c2, double time, int nsegs, struct segl *se
 
 			if( yes1 && yes2 ) {
 				nnodes[seg]++;
-				if( nnodes[seg] >= (2*nsam-2) ) tseg--;
+				if( nnodes[seg] >= (2*nsam-2) )
+                                        tseg--;
 				else
 					(pseg+tseg)->desc = nnodes[seg];
 				ptree=seglst[seg].ptree;
