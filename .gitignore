@@ -67,3 +67,6 @@ compile_commands.json
 CTestTestfile.cmake
 
 # End of https://www.gitignore.io/api/cmake
+
+## Project specific
+Makefile
